@@ -1,0 +1,32 @@
+[Unit]
+Description=Karadul Mesh VPN Node
+Documentation=https://github.com/ersinkoc/karadul
+After=network-online.target
+Wants=network-online.target
+ConditionFileNotEmpty=/etc/karadul/node.json
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/karadul up --config /etc/karadul/node.json --log-level info
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=10s
+
+# Security hardening
+NoNewPrivileges=no
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/karadul /etc/karadul
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=karadul
+
+[Install]
+WantedBy=multi-user.target
