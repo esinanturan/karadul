@@ -6,6 +6,9 @@
 [![Go Version](https://img.shields.io/badge/Go-1.23+-blue.svg)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ersinkoc/karadul)](https://goreportcard.com/report/github.com/ersinkoc/karadul)
+[![Release](https://img.shields.io/github/v/release/ersinkoc/karadul?include_prereleases)](https://github.com/ersinkoc/karadul/releases)
+
+> 🧪 **Beta Available:** [v0.1.0-beta.1](https://github.com/ersinkoc/karadul/releases/tag/v0.1.0-beta.1) now with Windows support! [Test it out →](https://github.com/ersinkoc/karadul/releases)
 
 ---
 
@@ -181,6 +184,11 @@ karadul keygen                # Generate node keypair
 karadul auth-keys create      # Create authentication key
 karadul exit-node enable      # Enable as exit node
 karadul exit-node use <peer>  # Route traffic through peer
+
+# Windows-specific (beta)
+karadul wintun-check          # Check Wintun driver installation
+karadul firewall setup        # Add Windows Firewall rules
+karadul firewall check        # Check firewall configuration
 ```
 
 ---
@@ -200,6 +208,8 @@ karadul exit-node use <peer>  # Route traffic through peer
 
 - [SPECIFICATION.md](SPECIFICATION.md) — Detailed technical specification
 - [Architecture Decision Records](contrib/adr/) — Design decisions and rationale
+- [Windows Beta Guide](contrib/WINDOWS_BETA_GUIDE.md) — Windows installation and usage
+- [Beta Release Checklist](contrib/BETA_RELEASE_CHECKLIST.md) — Post-release tasks
 
 ---
 
