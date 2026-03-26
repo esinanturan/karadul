@@ -1,8 +1,8 @@
 # Karadul
 
 > **Karadul** — Self-hosted, zero-dependency mesh VPN system written in Go.
-> Ağ ören, mesh kuran, dokunduğu her noktayı birbirine bağlayan sistem.
 
+[![CI](https://github.com/ersinkoc/karadul/actions/workflows/ci.yml/badge.svg)](https://github.com/ersinkoc/karadul/actions)
 [![Go Version](https://img.shields.io/badge/Go-1.23+-blue.svg)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ersinkoc/karadul)](https://goreportcard.com/report/github.com/ersinkoc/karadul)

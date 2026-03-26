@@ -1,27 +1,39 @@
-.PHONY: build build-all test test-race test-cover clean install lint fmt vet help
+.PHONY: build build-all test test-race test-cover clean install lint fmt vet help docker-build docker-compose-up release watch setup-homebrew ci
 
 # Build variables
 BINARY_NAME=karadul
-VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION?=$(shell cat VERSION 2>/dev/null || git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
-LDFLAGS=-ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
+LDFLAGS=-ldflags "-s -w -X main.version=$(VERSION)"
+BUILD_DIR=build
 
 # Default target
 .DEFAULT_GOAL := help
 
 help: ## Show this help
 	@echo "Available targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 build: ## Build the binary for current platform
 	go build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/karadul
 
-build-all: ## Build for all platforms (linux, darwin, windows)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-linux-amd64 ./cmd/karadul
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-linux-arm64 ./cmd/karadul
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-darwin-amd64 ./cmd/karadul
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-darwin-arm64 ./cmd/karadul
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-windows-amd64.exe ./cmd/karadul
+build-all: ## Build for all platforms (linux, darwin, windows, freebsd, openbsd)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Building for Linux..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/karadul
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/karadul
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-armv7 ./cmd/karadul
+	@echo "Building for macOS..."
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/karadul
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/karadul
+	@echo "Building for Windows..."
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/karadul
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe ./cmd/karadul
+	CGO_ENABLED=0 GOOS=windows GOARCH=386 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-x86.exe ./cmd/karadul
+	@echo "Building for BSD..."
+	CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-freebsd-amd64 ./cmd/karadul
+	CGO_ENABLED=0 GOOS=openbsd GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-openbsd-amd64 ./cmd/karadul
+	@echo "✅ All builds complete in $(BUILD_DIR)/"
 
 test: ## Run tests
 	go test -v -count=1 ./...
@@ -53,12 +65,29 @@ check: fmt vet test-race ## Run all checks (format, vet, tests with race)
 
 clean: ## Clean build artifacts
 	rm -f $(BINARY_NAME)
-	rm -rf dist/
+	rm -rf $(BUILD_DIR) dist/
 	rm -f coverage.out coverage.html
 	go clean -cache
 
 install: build ## Install binary to $GOPATH/bin
 	go install $(LDFLAGS) ./cmd/karadul
+
+docker-build: ## Build Docker image
+	docker build -t $(BINARY_NAME):$(VERSION) .
+
+docker-run: ## Run Docker container
+	docker run -d --name $(BINARY_NAME) \
+		--cap-add NET_ADMIN \
+		--cap-add NET_RAW \
+		-p 8080:8080 \
+		-p 3478:3478/udp \
+		$(BINARY_NAME):$(VERSION) server --addr=:8080
+
+docker-compose-up: ## Start with docker-compose
+	docker-compose up -d
+
+docker-compose-down: ## Stop docker-compose
+	docker-compose down
 
 run-server: build ## Build and run coordination server
 	./$(BINARY_NAME) server --addr=:8080
@@ -73,3 +102,15 @@ mod-tidy: ## Tidy go modules
 update-deps: ## Update dependencies
 	go get -u ./...
 	go mod tidy
+
+release: ## Create a new release (usage: make release VERSION=v0.1.0)
+	./scripts/release.sh $(VERSION)
+
+watch: ## Watch GitHub Actions workflow
+	./scripts/watch-release.sh $(VERSION)
+
+setup-homebrew: ## Setup Homebrew tap
+	./scripts/setup-homebrew-tap.sh
+
+ci: fmt vet test-race build ## Run full CI pipeline
+	@echo "✅ CI checks passed"
