@@ -1,0 +1,42 @@
+class Karadul < Formula
+  desc "Self-hosted, zero-dependency mesh VPN system"
+  homepage "https://github.com/ersinkoc/karadul"
+  version "VERSION_PLACEHOLDER"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/ersinkoc/karadul/releases/download/v#{version}/karadul-darwin-arm64"
+      sha256 "SHA256_DARWIN_ARM64_PLACEHOLDER"
+    else
+      url "https://github.com/ersinkoc/karadul/releases/download/v#{version}/karadul-darwin-amd64"
+      sha256 "SHA256_DARWIN_AMD64_PLACEHOLDER"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "https://github.com/ersinkoc/karadul/releases/download/v#{version}/karadul-linux-arm64"
+      sha256 "SHA256_LINUX_ARM64_PLACEHOLDER"
+    else
+      url "https://github.com/ersinkoc/karadul/releases/download/v#{version}/karadul-linux-amd64"
+      sha256 "SHA256_LINUX_AMD64_PLACEHOLDER"
+    end
+  end
+
+  def install
+    bin.install Dir["karadul-*"].first => "karadul"
+  end
+
+  service do
+    run [opt_bin/"karadul", "up"]
+    keep_alive true
+    log_path var/"log/karadul.log"
+    error_log_path var/"log/karadul.log"
+    environment_variables PATH: std_service_path_env
+  end
+
+  test do
+    assert_match "karadul version", shell_output("#{bin}/karadul version")
+  end
+end

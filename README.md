@@ -28,18 +28,63 @@ Think of it as: **Tailscale + Headscale in one binary, built from scratch.**
 
 ## Quick Start
 
-```bash
-# Build the binary
-go build -o karadul ./cmd/karadul
+### Installation
 
+#### macOS (Homebrew)
+```bash
+brew tap ersinkoc/karadul
+brew install karadul
+```
+
+#### Linux (Binary)
+```bash
+# Download latest release
+curl -LO https://github.com/ersinkoc/karadul/releases/latest/download/karadul-linux-amd64
+chmod +x karadul-linux-amd64
+sudo mv karadul-linux-amd64 /usr/local/bin/karadul
+```
+
+#### Windows
+```powershell
+# PowerShell - Download and install
+Invoke-WebRequest -Uri "https://github.com/ersinkoc/karadul/releases/latest/download/karadul-windows-amd64.exe" -OutFile "karadul.exe"
+# Move to PATH (e.g., C:\Windows\System32 or create C:\Tools and add to PATH)
+```
+
+#### Docker
+```bash
+docker run -d --name karadul \
+  --cap-add NET_ADMIN \
+  --cap-add NET_RAW \
+  -p 8080:8080 \
+  -p 3478:3478/udp \
+  ghcr.io/ersinkoc/karadul:latest \
+  server --addr=:8080
+```
+
+#### Build from Source
+```bash
+go install github.com/ersinkoc/karadul/cmd/karadul@latest
+# or
+git clone https://github.com/ersinkoc/karadul.git
+cd karadul
+go build -o karadul ./cmd/karadul
+```
+
+### Usage
+
+```bash
 # Start as coordination server
-./karadul server --addr=:8080
+karadul server --addr=:8080
+
+# Create an auth key
+karadul auth create-key
 
 # On another node, join the mesh
-./karadul up --server=https://your-server:8080 --auth-key=<key>
+karadul up --server=https://your-server:8080 --auth-key=<key>
 
 # Check status
-./karadul status
+karadul status
 ```
 
 ---
@@ -58,6 +103,7 @@ go build -o karadul ./cmd/karadul
 | **ACL Support** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | **NAT Traversal** | ✅ STUN + Hole Punching | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | **Exit Nodes** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Platforms** | Linux, macOS, Windows, BSD | All platforms | All platforms | Linux, macOS, Windows, BSD | All platforms |
 | **Mobile Support** | 🚧 Planned | ✅ iOS/Android | ✅ Via Tailscale client | ✅ iOS/Android | ✅ All platforms |
 | **Open Source** | ✅ MIT | ❌ Client only | ✅ BSD-3 | ✅ Apache 2.0 | ❌ BUSL/SSPL |
 | **Complexity** | Low (one binary) | Low (managed) | Medium (setup required) | Medium (setup required) | Low (managed) |

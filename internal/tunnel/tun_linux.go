@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -205,7 +206,7 @@ func buildNlAddrMsg(ifIndex int, ip net.IP, prefixLen int, family int) []byte {
 	}
 
 	// RTA_LOCAL attribute
-	rtaLen := unix.RTA_ALIGN(unix.SizeofRtAttr + len(ipBytes))
+	rtaLen := rtaAlign(unix.SizeofRtAttr + len(ipBytes))
 	rtaLocal := make([]byte, rtaLen)
 	binary.LittleEndian.PutUint16(rtaLocal[0:], uint16(unix.SizeofRtAttr+len(ipBytes)))
 	binary.LittleEndian.PutUint16(rtaLocal[2:], unix.IFA_LOCAL)
@@ -252,14 +253,14 @@ func buildNlRouteMsg(ifIndex int, dst *net.IPNet) []byte {
 	}
 
 	// RTA_DST
-	rtaLen := unix.RTA_ALIGN(unix.SizeofRtAttr + len(ipBytes))
+	rtaLen := rtaAlign(unix.SizeofRtAttr + len(ipBytes))
 	rtaDst := make([]byte, rtaLen)
 	binary.LittleEndian.PutUint16(rtaDst[0:], uint16(unix.SizeofRtAttr+len(ipBytes)))
 	binary.LittleEndian.PutUint16(rtaDst[2:], unix.RTA_DST)
 	copy(rtaDst[4:], ipBytes)
 
 	// RTA_OIF
-	oif := make([]byte, unix.RTA_ALIGN(unix.SizeofRtAttr+4))
+	oif := make([]byte, rtaAlign(unix.SizeofRtAttr+4))
 	binary.LittleEndian.PutUint16(oif[0:], uint16(unix.SizeofRtAttr+4))
 	binary.LittleEndian.PutUint16(oif[2:], unix.RTA_OIF)
 	binary.LittleEndian.PutUint32(oif[4:], uint32(ifIndex))
@@ -293,11 +294,11 @@ func buildNlRouteMsg(ifIndex int, dst *net.IPNet) []byte {
 // recvNlAck reads the ACK from the netlink socket.
 func recvNlAck(sock int) error {
 	buf := make([]byte, 4096)
-	n, err := unix.Recv(sock, buf, 0)
+	n, _, err := syscall.Recvfrom(sock, buf, 0)
 	if err != nil {
 		return fmt.Errorf("netlink recv: %w", err)
 	}
-	msgs, err := unix.ParseNetlinkMessage(buf[:n])
+	msgs, err := parseNetlinkMessage(buf[:n])
 	if err != nil {
 		return fmt.Errorf("parse netlink: %w", err)
 	}
@@ -310,4 +311,28 @@ func recvNlAck(sock int) error {
 		}
 	}
 	return nil
+}
+
+// rtaAlign rounds length up to RTA_ALIGNTO (4 bytes)
+func rtaAlign(length int) int {
+	return (length + 3) & ^3
+}
+
+// parseNetlinkMessage parses netlink messages from a byte slice.
+// This is a compatibility function for cross-compilation.
+func parseNetlinkMessage(b []byte) ([]syscall.NetlinkMessage, error) {
+	var msgs []syscall.NetlinkMessage
+	for len(b) >= unix.SizeofNlMsghdr {
+		h := (*syscall.NlMsghdr)(unsafe.Pointer(&b[0]))
+		if int(h.Len) < unix.SizeofNlMsghdr || int(h.Len) > len(b) {
+			return nil, fmt.Errorf("invalid netlink message length: %d", h.Len)
+		}
+		m := syscall.NetlinkMessage{
+			Header: *h,
+			Data:   b[unix.SizeofNlMsghdr:h.Len],
+		}
+		msgs = append(msgs, m)
+		b = b[h.Len:]
+	}
+	return msgs, nil
 }
