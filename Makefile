@@ -1,4 +1,4 @@
-.PHONY: build build-all test test-race test-cover clean install lint fmt vet help docker-build docker-compose-up release watch setup-homebrew ci
+.PHONY: build build-all test test-race test-cover clean install lint fmt vet help docker-build docker-compose-up release watch setup-homebrew ci web-test web-test-cover
 
 # Build variables
 BINARY_NAME=karadul
@@ -6,6 +6,7 @@ VERSION?=$(shell cat VERSION 2>/dev/null || git describe --tags --always --dirty
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS=-ldflags "-s -w -X main.version=$(VERSION)"
 BUILD_DIR=build
+WEB_DIR=web
 
 # Default target
 .DEFAULT_GOAL := help
