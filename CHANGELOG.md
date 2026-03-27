@@ -59,6 +59,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coordination server
 - NAT traversal
 
-[Unreleased]: https://github.com/ersinkoc/karadul/compare/v0.1.0-beta.1...HEAD
-[0.1.0-beta.1]: https://github.com/ersinkoc/karadul/releases/tag/v0.1.0-beta.1
-[0.1.0]: https://github.com/ersinkoc/karadul/releases/tag/v0.1.0
+[Unreleased]: https://github.com/karadul/karadul/compare/v0.1.0-beta.1...HEAD
+[0.1.0-beta.1]: https://github.com/karadul/karadul/releases/tag/v0.1.0-beta.1
+[0.1.0]: https://github.com/karadul/karadul/releases/tag/v0.1.0

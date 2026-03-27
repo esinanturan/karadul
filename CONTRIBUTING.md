@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Karadul! This document provides g
 
 ```bash
 # Clone the repository
-git clone https://github.com/ersinkoc/karadul.git
+git clone https://github.com/karadul/karadul.git
 cd karadul
 
 # Install dependencies

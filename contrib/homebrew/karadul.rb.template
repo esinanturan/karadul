@@ -1,25 +1,25 @@
 class Karadul < Formula
   desc "Self-hosted, zero-dependency mesh VPN system"
-  homepage "https://github.com/ersinkoc/karadul"
+  homepage "https://github.com/karadul/karadul"
   version "VERSION_PLACEHOLDER"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/ersinkoc/karadul/releases/download/v#{version}/karadul-darwin-arm64"
+      url "https://github.com/karadul/karadul/releases/download/v#{version}/karadul-darwin-arm64"
       sha256 "SHA256_DARWIN_ARM64_PLACEHOLDER"
     else
-      url "https://github.com/ersinkoc/karadul/releases/download/v#{version}/karadul-darwin-amd64"
+      url "https://github.com/karadul/karadul/releases/download/v#{version}/karadul-darwin-amd64"
       sha256 "SHA256_DARWIN_AMD64_PLACEHOLDER"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/ersinkoc/karadul/releases/download/v#{version}/karadul-linux-arm64"
+      url "https://github.com/karadul/karadul/releases/download/v#{version}/karadul-linux-arm64"
       sha256 "SHA256_LINUX_ARM64_PLACEHOLDER"
     else
-      url "https://github.com/ersinkoc/karadul/releases/download/v#{version}/karadul-linux-amd64"
+      url "https://github.com/karadul/karadul/releases/download/v#{version}/karadul-linux-amd64"
       sha256 "SHA256_LINUX_AMD64_PLACEHOLDER"
     end
   end

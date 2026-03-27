@@ -4,7 +4,7 @@ Karadul mesh VPN'in ilk beta sürümü yayında!
 
 ### 📦 İndirme
 
-**GitHub Release:** https://github.com/ersinkoc/karadul/releases/tag/v0.1.0-beta.1
+**GitHub Release:** https://github.com/karadul/karadul/releases/tag/v0.1.0-beta.1
 
 **Platformlar:**
 - Linux (amd64, arm64, armv7)
@@ -14,7 +14,7 @@ Karadul mesh VPN'in ilk beta sürümü yayında!
 
 **Docker:**
 ```bash
-docker pull ghcr.io/ersinkoc/karadul:v0.1.0-beta.1
+docker pull ghcr.io/karadul/karadul:v0.1.0-beta.1
 ```
 
 ### ✨ Yeni Özellikler
@@ -63,8 +63,8 @@ karadul wintun-check
 ### 📝 Geri Bildirim
 
 Sorun ve önerileriniz için:
-- 🐛 [GitHub Issues](https://github.com/ersinkoc/karadul/issues)
-- 💬 [GitHub Discussions](https://github.com/ersinkoc/karadul/discussions)
+- 🐛 [GitHub Issues](https://github.com/karadul/karadul/issues)
+- 💬 [GitHub Discussions](https://github.com/karadul/karadul/discussions)
 
 ### 🔒 Güvenlik
 
@@ -76,4 +76,4 @@ Beta sürüm production kullanımı için önerilmez. Test ortamında kullanın.
 Beta testleri tamamlandıktan ve Windows desteği stabilize edildikten sonra stable sürüm yayınlanacak.
 
 **Star atmayı unutmayın!** ⭐
-https://github.com/ersinkoc/karadul
+https://github.com/karadul/karadul

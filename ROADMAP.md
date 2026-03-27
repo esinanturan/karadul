@@ -4,7 +4,7 @@ This document outlines the planned features and milestones for Karadul.
 
 ## Current Status
 
-**Latest Release:** [v0.1.0-beta.1](https://github.com/ersinkoc/karadul/releases/tag/v0.1.0-beta.1)
+**Latest Release:** [v0.1.0-beta.1](https://github.com/karadul/karadul/releases/tag/v0.1.0-beta.1)
 
 ## Milestones
 
@@ -110,7 +110,7 @@ Want to help shape the roadmap? Here's how:
 
 ## Feature Requests
 
-Have an idea? [Open a discussion](https://github.com/ersinkoc/karadul/discussions)!
+Have an idea? [Open a discussion](https://github.com/karadul/karadul/discussions)!
 
 Popular requests will be added to the roadmap.
 

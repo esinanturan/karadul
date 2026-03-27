@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Coordination Server
   karadul-server:
-    image: ghcr.io/ersinkoc/karadul:latest
+    image: ghcr.io/karadul/karadul:latest
     container_name: karadul-server
     command: server --addr=:8080 --data-dir=/data
     ports:
@@ -17,7 +17,7 @@ services:
 
   # DERP Relay (optional - can also use embedded relay)
   karadul-relay:
-    image: ghcr.io/ersinkoc/karadul:latest
+    image: ghcr.io/karadul/karadul:latest
     container_name: karadul-relay
     command: relay --addr=:3478
     ports:

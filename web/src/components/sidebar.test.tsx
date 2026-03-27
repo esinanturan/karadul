@@ -50,7 +50,7 @@ describe("Sidebar", () => {
     renderWithRouter()
 
     const githubLink = screen.getByText("GitHub").closest("a")
-    expect(githubLink).toHaveAttribute("href", "https://github.com/ersinkoc/karadul")
+    expect(githubLink).toHaveAttribute("href", "https://github.com/karadul/karadul")
     expect(githubLink).toHaveAttribute("target", "_blank")
     expect(githubLink).toHaveAttribute("rel", "noopener noreferrer")
   })

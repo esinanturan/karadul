@@ -23,6 +23,7 @@ karadul
 /bin/
 /dist/
 /build/
+/package-lock.json
 
 # IDE
 .idea/

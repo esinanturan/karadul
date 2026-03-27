@@ -147,7 +147,7 @@ jobs:
 
             ### macOS (Homebrew)
             ```bash
-            brew tap ersinkoc/karadul
+            brew tap karadul/karadul
             brew install karadul
             ```
 

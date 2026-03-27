@@ -4,7 +4,7 @@
 
 set -e
 
-REPO_OWNER="ersinkoc"
+REPO_OWNER="karadul"
 TAP_REPO="homebrew-karadul"
 FORMULA_DIR="Formula"
 
@@ -38,7 +38,7 @@ else
     gh repo create "$TAP_REPO" \
         --public \
         --description "Homebrew tap for Karadul mesh VPN" \
-        --homepage "https://github.com/ersinkoc/karadul"
+        --homepage "https://github.com/karadul/karadul"
     echo "✅ Created: $REPO_OWNER/$TAP_REPO"
 fi
 
@@ -59,7 +59,7 @@ cp "contrib/homebrew/karadul.rb.template" "$TEMP_DIR/$FORMULA_DIR/karadul.rb"
 # Get latest release info
 echo ""
 echo "Fetching latest release info..."
-LATEST_RELEASE=$(gh release list --repo "ersinkoc/karadul" --limit 1 --json tagName --jq '.[0].tagName')
+LATEST_RELEASE=$(gh release list --repo "karadul/karadul" --limit 1 --json tagName --jq '.[0].tagName')
 
 if [ -n "$LATEST_RELEASE" ]; then
     echo "Latest release: $LATEST_RELEASE"
@@ -86,7 +86,7 @@ if [ -n "$LATEST_RELEASE" ]; then
         IFS=':' read -r binary placeholder <<< "$platform_info"
 
         echo -n "  Downloading $binary... "
-        if gh release download "$LATEST_RELEASE" --repo "ersinkoc/karadul" -p "$binary" -O "$binary" 2>/dev/null; then
+        if gh release download "$LATEST_RELEASE" --repo "karadul/karadul" -p "$binary" -O "$binary" 2>/dev/null; then
             SHA=$(sha256sum "$binary" | cut -d' ' -f1)
             sed -i.bak "s/$placeholder/$SHA/g" "$FORMULA_DIR/karadul.rb"
             rm "$FORMULA_DIR/karadul.rb.bak"
@@ -102,13 +102,13 @@ fi
 cat > "$TEMP_DIR/README.md" << 'EOF'
 # Karadul Homebrew Tap
 
-Homebrew tap for [Karadul](https://github.com/ersinkoc/karadul) - Self-hosted mesh VPN.
+Homebrew tap for [Karadul](https://github.com/karadul/karadul) - Self-hosted mesh VPN.
 
 ## Installation
 
 ```bash
 # Add this tap
-brew tap ersinkoc/karadul
+brew tap karadul/karadul
 
 # Install Karadul
 brew install karadul
@@ -124,7 +124,7 @@ karadul server --addr=:8080
 karadul up --server=https://your-server:8080 --auth-key=<key>
 ```
 
-See [Karadul documentation](https://github.com/ersinkoc/karadul#readme) for more details.
+See [Karadul documentation](https://github.com/karadul/karadul#readme) for more details.
 
 ## Updates
 
@@ -137,7 +137,7 @@ brew upgrade karadul
 
 ```bash
 brew uninstall karadul
-brew untap ersinkoc/karadul
+brew untap karadul/karadul
 ```
 EOF
 

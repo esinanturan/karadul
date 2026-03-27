@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: GitHub Discussions
-    url: https://github.com/ersinkoc/karadul/discussions
+    url: https://github.com/karadul/karadul/discussions
     about: For questions, ideas, and general discussions
   - name: Beta Test Reports
-    url: https://github.com/ersinkoc/karadul/issues/new?template=beta_test_report.md
+    url: https://github.com/karadul/karadul/issues/new?template=beta_test_report.md
     about: Report beta testing feedback
   - name: Documentation
-    url: https://github.com/ersinkoc/karadul#readme
+    url: https://github.com/karadul/karadul#readme
     about: README and documentation

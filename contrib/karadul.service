@@ -1,6 +1,6 @@
 [Unit]
 Description=Karadul Mesh VPN Node
-Documentation=https://github.com/ersinkoc/karadul
+Documentation=https://github.com/karadul/karadul
 After=network-online.target
 Wants=network-online.target
 ConditionFileNotEmpty=/etc/karadul/node.json

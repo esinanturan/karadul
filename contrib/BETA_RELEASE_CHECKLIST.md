@@ -2,7 +2,7 @@
 
 ## 1. GitHub Actions İzleme (5-10 dk)
 
-🔗 **Kontrol linki:** https://github.com/ersinkoc/karadul/actions
+🔗 **Kontrol linki:** https://github.com/karadul/karadul/actions
 
 Workflow'ların tamamlanmasını bekleyin:
 - [ ] CI workflow (test + build)
@@ -12,7 +12,7 @@ Workflow'ların tamamlanmasını bekleyin:
 ## 2. Release Doğrulama
 
 GitHub Releases sayfasında kontrol edin:
-🔗 https://github.com/ersinkoc/karadul/releases/tag/v0.1.0-beta.1
+🔗 https://github.com/karadul/karadul/releases/tag/v0.1.0-beta.1
 
 Kontrol listesi:
 - [ ] 10 binary mevcut (linux-amd64, darwin-arm64, windows-amd64.exe, vb.)
@@ -22,12 +22,12 @@ Kontrol listesi:
 
 ## 3. Docker Image Kontrolü
 
-🔗 https://github.com/ersinkoc/karadul/pkgs/container/karadul
+🔗 https://github.com/karadul/karadul/pkgs/container/karadul
 
 ```bash
 # Test et
-docker pull ghcr.io/ersinkoc/karadul:v0.1.0-beta.1
-docker run --rm ghcr.io/ersinkoc/karadul:v0.1.0-beta.1 version
+docker pull ghcr.io/karadul/karadul:v0.1.0-beta.1
+docker run --rm ghcr.io/karadul/karadul:v0.1.0-beta.1 version
 ```
 
 ## 4. Homebrew Tap Kurulumu (Opsiyonel)
@@ -39,7 +39,7 @@ Homebrew desteği için ayrı repo oluşturun:
 gh repo create homebrew-karadul --public --description "Homebrew tap for Karadul"
 
 # Clone et
-git clone https://github.com/ersinkoc/homebrew-karadul.git
+git clone https://github.com/karadul/homebrew-karadul.git
 cd homebrew-karadul
 
 # Formula oluştur
@@ -92,5 +92,5 @@ Beta feedback toplandıktan sonra:
 ## Yardım ve Destek
 
 Sorularınız için:
-- GitHub Discussions: https://github.com/ersinkoc/karadul/discussions
-- GitHub Issues: https://github.com/ersinkoc/karadul/issues
+- GitHub Discussions: https://github.com/karadul/karadul/discussions
+- GitHub Issues: https://github.com/karadul/karadul/issues

@@ -78,7 +78,7 @@ export function Sidebar({ className }: SidebarProps) {
 
       <div className="p-4">
         <a
-          href="https://github.com/ersinkoc/karadul"
+          href="https://github.com/karadul/karadul"
           target="_blank"
           rel="noopener noreferrer"
         >

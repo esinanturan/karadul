@@ -49,7 +49,7 @@ Write-Host "Wintun kurulumu tamamlandi!"
 
 ```powershell
 # Binary indir
-$url = "https://github.com/ersinkoc/karadul/releases/download/v0.1.0-beta.1/karadul-windows-amd64.exe"
+$url = "https://github.com/karadul/karadul/releases/download/v0.1.0-beta.1/karadul-windows-amd64.exe"
 $output = "$env:USERPROFILE\karadul.exe"
 Invoke-WebRequest -Uri $url -OutFile $output
 
@@ -164,7 +164,7 @@ Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Karadul'}
 
 Sorun yaşarsanız lütfen bildirin:
 
-1. GitHub Issues: https://github.com/ersinkoc/karadul/issues
+1. GitHub Issues: https://github.com/karadul/karadul/issues
 2. Hata raporu şablonu:
    ```
    - Windows sürümü:
@@ -208,6 +208,6 @@ karadul firewall allow-port 51820 udp
 
 ## Kaynaklar
 
-- [Ana Depo](https://github.com/ersinkoc/karadul)
+- [Ana Depo](https://github.com/karadul/karadul)
 - [Wintun](https://www.wintun.net/)
 - [Sorun Bildir](../../issues)

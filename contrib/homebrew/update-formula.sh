@@ -5,7 +5,7 @@
 set -e
 
 VERSION=${1#v}  # Remove 'v' prefix if present
-REPO="ersinkoc/karadul"
+REPO="karadul/karadul"
 
 if [ -z "$VERSION" ]; then
     echo "Usage: $0 <version>"
@@ -54,6 +54,6 @@ echo ""
 echo "Formula updated: $OUTPUT"
 echo ""
 echo "To publish to homebrew-tap:"
-echo "  1. Clone ersinkoc/homebrew-karadul repo"
+echo "  1. Clone karadul/homebrew-karadul repo"
 echo "  2. Copy $OUTPUT to Formula/karadul.rb"
 echo "  3. Commit and push"

@@ -3,7 +3,7 @@
 # Usage: ./scripts/watch-release.sh [tag]
 
 TAG="${1:-v0.1.0-beta.1}"
-REPO="ersinkoc/karadul"
+REPO="karadul/karadul"
 
 echo "📊 Karadul Release Monitor"
 echo "=========================="
