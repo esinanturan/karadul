@@ -174,7 +174,7 @@ func TestServer_Start_Stop(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Start(ctx) }()
+	go func() { errCh <- srv.Start(ctx, nil) }()
 
 	// Give it a moment to start.
 	time.Sleep(20 * time.Millisecond)
@@ -213,7 +213,7 @@ func TestServer_Start_SelfSignedTLS(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Start(ctx) }()
+	go func() { errCh <- srv.Start(ctx, nil) }()
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 
@@ -339,7 +339,7 @@ func TestServer_Start_DoesNotImmediatelyError(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Start(ctx) }()
+	go func() { errCh <- srv.Start(ctx, nil) }()
 
 	select {
 	case err := <-errCh:
@@ -533,7 +533,7 @@ func TestServer_Start_ListenError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err = srv.Start(ctx)
+	err = srv.Start(ctx, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid listen address")
 	}
