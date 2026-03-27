@@ -81,18 +81,18 @@ type Engine struct {
 
 	// Session state
 	mu       sync.RWMutex
-	sessions map[[32]byte]*peerSession // pubKey  → active session
-	byID     map[uint32]*peerSession   // localID → active session (for inbound data)
+	sessions map[[32]byte]*peerSession    // pubKey  → active session
+	byID     map[uint32]*peerSession      // localID → active session (for inbound data)
 	pending  map[uint32]*pendingHandshake // localID → in-progress initiator HS
 
 	// Monotonic session ID counter (atomic to avoid holding mu during nextID)
 	idCounter atomic.Uint32
 
 	// Coordination
-	serverURL  string
-	nodeID     string
-	virtualIP  net.IP
-	publicEP   *net.UDPAddr // our NAT-translated public endpoint
+	serverURL string
+	nodeID    string
+	virtualIP net.IP
+	publicEP  *net.UDPAddr // our NAT-translated public endpoint
 
 	// ACL
 	acl *auth.Engine
@@ -1178,13 +1178,13 @@ func (e *Engine) LocalStatus() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"node_id":     e.nodeID,
-		"virtual_ip":  e.virtualIP.String(),
-		"public_key":  e.kp.Public.String(),
-		"public_ep":   ep,
-		"sessions":    sessions,
-		"pending_hs":  pending,
-		"peers":       peerInfo,
+		"node_id":    e.nodeID,
+		"virtual_ip": e.virtualIP.String(),
+		"public_key": e.kp.Public.String(),
+		"public_ep":  ep,
+		"sessions":   sessions,
+		"pending_hs": pending,
+		"peers":      peerInfo,
 	}
 }
 

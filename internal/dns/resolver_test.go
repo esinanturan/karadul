@@ -17,7 +17,7 @@ func buildQuery(txID uint16, name string, qtype uint16) []byte {
 	hdr := make([]byte, 12)
 	binary.BigEndian.PutUint16(hdr[0:], txID)
 	binary.BigEndian.PutUint16(hdr[2:], 0x0100) // RD=1, QR=0
-	binary.BigEndian.PutUint16(hdr[4:], 1)       // qdcount=1
+	binary.BigEndian.PutUint16(hdr[4:], 1)      // qdcount=1
 	question := append(encodeName(name),
 		byte(qtype>>8), byte(qtype),
 		0x00, 0x01, // class IN
@@ -471,7 +471,7 @@ func TestParseName_CompressionPointer(t *testing.T) {
 	// Offset 5: compression pointer back to offset 0
 	buf := []byte{
 		3, 'f', 'o', 'o', 0, // "foo." at offset 0
-		0xC0, 0x00,           // compression pointer to offset 0
+		0xC0, 0x00, // compression pointer to offset 0
 	}
 	name, _, err := parseName(buf, 5)
 	if err != nil {
@@ -682,8 +682,8 @@ func TestParseQuestion_QTypeQClassTooShort(t *testing.T) {
 	// But we only provide 2 bytes after the name (not enough for qtype + qclass).
 	pkt := []byte{
 		0x03, 'f', 'o', 'o', // "foo" label
-		0x00,               // null terminator
-		0x00, 0x01,         // only qtype, missing qclass
+		0x00,       // null terminator
+		0x00, 0x01, // only qtype, missing qclass
 	}
 
 	_, _, _, err := parseQuestion(pkt, 0)

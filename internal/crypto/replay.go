@@ -5,7 +5,7 @@ import "sync"
 const (
 	// WindowSize is the number of packets tracked in the sliding window.
 	// Must be a multiple of 64.
-	WindowSize = 2048
+	WindowSize  = 2048
 	windowWords = WindowSize / 64
 )
 
@@ -13,9 +13,9 @@ const (
 // It tracks which counter values have been seen and rejects duplicates
 // or packets that fall behind the window floor.
 type ReplayWindow struct {
-	mu      sync.Mutex
-	bitmap  [windowWords]uint64
-	floor   uint64 // lowest counter still inside the window
+	mu     sync.Mutex
+	bitmap [windowWords]uint64
+	floor  uint64 // lowest counter still inside the window
 }
 
 // Check returns true if counter is acceptable (not a replay, not too old).

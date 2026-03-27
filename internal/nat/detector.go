@@ -9,12 +9,12 @@ import (
 type NATType int
 
 const (
-	NATUnknown      NATType = iota
-	NATDirect                // No NAT; public IP is directly reachable
-	NATFullCone              // Full Cone: any external host can send to mapped port
-	NATRestrictedCone        // Restricted Cone: external host must have received a packet first
-	NATPortRestricted        // Port Restricted: external host+port must match
-	NATSymmetric             // Symmetric: each destination gets a different mapping
+	NATUnknown        NATType = iota
+	NATDirect                 // No NAT; public IP is directly reachable
+	NATFullCone               // Full Cone: any external host can send to mapped port
+	NATRestrictedCone         // Restricted Cone: external host must have received a packet first
+	NATPortRestricted         // Port Restricted: external host+port must match
+	NATSymmetric              // Symmetric: each destination gets a different mapping
 )
 
 func (n NATType) String() string {

@@ -9,12 +9,12 @@ import (
 
 // IPPool manages virtual IP allocation within a CGNAT subnet (default 100.64.0.0/10).
 type IPPool struct {
-	mu       sync.Mutex
-	subnet   *net.IPNet
-	base     uint32 // first host address (subnet base + 1)
-	size     uint32 // number of usable host addresses
-	used     map[uint32]string // ip → nodeID
-	byNode   map[string]uint32 // nodeID → ip
+	mu     sync.Mutex
+	subnet *net.IPNet
+	base   uint32            // first host address (subnet base + 1)
+	size   uint32            // number of usable host addresses
+	used   map[uint32]string // ip → nodeID
+	byNode map[string]uint32 // nodeID → ip
 }
 
 // NewIPPool creates an IPPool for the given CIDR string (e.g. "100.64.0.0/10").
@@ -31,7 +31,7 @@ func NewIPPool(cidr string) (*IPPool, error) {
 	if hostBits < 2 {
 		return nil, fmt.Errorf("subnet too small")
 	}
-	base := ipToUint32(subnet.IP) + 1 // skip network address
+	base := ipToUint32(subnet.IP) + 1   // skip network address
 	size := (uint32(1) << hostBits) - 2 // exclude broadcast
 
 	return &IPPool{

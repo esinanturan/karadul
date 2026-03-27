@@ -23,7 +23,7 @@ const (
 	stunAddrFamilyIPv4 = 0x01
 	stunAddrFamilyIPv6 = 0x02
 
-	stunHeaderSize = 20
+	stunHeaderSize  = 20
 	stunDialTimeout = 3 * time.Second
 )
 

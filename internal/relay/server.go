@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	derpPath        = "/derp"
-	pingInterval    = 30 * time.Second
+	derpPath           = "/derp"
+	pingInterval       = 30 * time.Second
 	clientWriteTimeout = 5 * time.Second
 )
 

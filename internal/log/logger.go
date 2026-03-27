@@ -154,5 +154,5 @@ func Info(msg string, args ...interface{})  { Default.Info(msg, args...) }
 func Warn(msg string, args ...interface{})  { Default.Warn(msg, args...) }
 func Error(msg string, args ...interface{}) { Default.Error(msg, args...) }
 
-func SetLevel(level Level)   { Default.level = level }
+func SetLevel(level Level)    { Default.level = level }
 func SetFormat(format Format) { Default.format = format }

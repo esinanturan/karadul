@@ -16,7 +16,7 @@ func buildIPv4Packet(src, dst net.IP, proto uint8, payload []byte) []byte {
 	pkt[2] = byte(totalLen >> 8)
 	pkt[3] = byte(totalLen)
 	// bytes 4-7: identification, flags, fragment offset — zero
-	pkt[8] = 64  // TTL
+	pkt[8] = 64 // TTL
 	pkt[9] = proto
 	// bytes 10-11: checksum — zero (not validated by parser)
 	copy(pkt[12:16], src4)

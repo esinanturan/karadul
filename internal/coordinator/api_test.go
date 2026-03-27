@@ -792,7 +792,7 @@ func TestExchangeEndpoint_Signed(t *testing.T) {
 	api, ts := newTestAPI(t)
 	// Register two nodes with different public keys.
 	const aliceB64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" // [32]byte{}
-	const bobB64 = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" // [32]byte{1, 0, ...}
+	const bobB64 = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="   // [32]byte{1, 0, ...}
 
 	registerTestNode(t, api, ts, aliceB64, "alice")
 

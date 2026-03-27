@@ -18,8 +18,8 @@ type ACLRule struct {
 
 // ACLPolicy is the complete network access-control policy.
 type ACLPolicy struct {
-	Version int       `json:"version"`
-	Rules   []ACLRule `json:"rules"`
+	Version int                 `json:"version"`
+	Rules   []ACLRule           `json:"rules"`
 	Groups  map[string][]string `json:"groups,omitempty"` // group name → list of CIDRs/IPs
 	Tags    map[string][]string `json:"tags,omitempty"`   // tag name → list of node IDs
 }

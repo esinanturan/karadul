@@ -223,8 +223,8 @@ func (m *mockWriteConn) Close() error {
 	return m.Conn.Close()
 }
 
-func (m *mockWriteConn) LocalAddr() net.Addr  { return m.Conn.LocalAddr() }
-func (m *mockWriteConn) RemoteAddr() net.Addr { return m.Conn.RemoteAddr() }
+func (m *mockWriteConn) LocalAddr() net.Addr                { return m.Conn.LocalAddr() }
+func (m *mockWriteConn) RemoteAddr() net.Addr               { return m.Conn.RemoteAddr() }
 func (m *mockWriteConn) SetDeadline(t time.Time) error      { return nil }
 func (m *mockWriteConn) SetReadDeadline(t time.Time) error  { return nil }
 func (m *mockWriteConn) SetWriteDeadline(t time.Time) error { return nil }

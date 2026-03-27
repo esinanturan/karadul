@@ -13,10 +13,10 @@ type PeerState int
 const (
 	PeerDiscovered PeerState = iota
 	PeerConnecting
-	PeerDirect   // connected via direct UDP
-	PeerRelayed  // connected via DERP relay
-	PeerIdle     // connected but no recent traffic
-	PeerExpired  // connection lost / timed out
+	PeerDirect  // connected via direct UDP
+	PeerRelayed // connected via DERP relay
+	PeerIdle    // connected but no recent traffic
+	PeerExpired // connection lost / timed out
 )
 
 func (s PeerState) String() string {
@@ -58,8 +58,8 @@ type Peer struct {
 	Routes    []*net.IPNet // subnets advertised by this peer
 
 	// Session
-	State     PeerState
-	lastSeen  time.Time
+	State         PeerState
+	lastSeen      time.Time
 	lastHandshake time.Time
 
 	// Callbacks

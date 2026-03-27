@@ -210,6 +210,20 @@ karadul firewall check        # Check firewall configuration
 - [Architecture Decision Records](contrib/adr/) — Design decisions and rationale
 - [Windows Beta Guide](contrib/WINDOWS_BETA_GUIDE.md) — Windows installation and usage
 - [Beta Release Checklist](contrib/BETA_RELEASE_CHECKLIST.md) — Post-release tasks
+- [Roadmap](ROADMAP.md) — Future plans and milestones
+
+---
+
+## Support
+
+If you find Karadul useful, please consider:
+
+- ⭐ [Star the repository](https://github.com/ersinkoc/karadul)
+- 🧪 [Test beta releases](https://github.com/ersinkoc/karadul/releases)
+- 🐛 [Report bugs](../../issues)
+- 💻 [Contribute code](CONTRIBUTING.md)
+
+See [FUNDING.md](FUNDING.md) for sponsorship options.
 
 ---
 

@@ -22,13 +22,14 @@ import (
 
 // Server is the Karadul coordination server.
 type Server struct {
-	cfg    *config.ServerConfig
-	store  *Store
-	pool   *IPPool
-	poller *Poller
-	api    *API
+	cfg     *config.ServerConfig
+	store   *Store
+	pool    *IPPool
+	poller  *Poller
+	api     *API
+	hub     *Hub
 	httpSrv *http.Server
-	log    *klog.Logger
+	log     *klog.Logger
 }
 
 // NewServer creates a coordination Server from cfg.
@@ -54,6 +55,7 @@ func NewServer(cfg *config.ServerConfig, log *klog.Logger) (*Server, error) {
 
 	poller := NewPoller(store)
 	api := NewAPI(store, pool, poller, cfg.ApprovalMode)
+	hub := NewHub(store)
 
 	return &Server{
 		cfg:    cfg,
@@ -61,12 +63,13 @@ func NewServer(cfg *config.ServerConfig, log *klog.Logger) (*Server, error) {
 		pool:   pool,
 		poller: poller,
 		api:    api,
+		hub:    hub,
 		log:    log,
 	}, nil
 }
 
 // Start begins listening and serving. Blocks until ctx is cancelled.
-func (s *Server) Start(ctx context.Context) error {
+func (s *Server) Start(ctx context.Context, webHandler http.Handler) error {
 	mux := http.NewServeMux()
 	s.api.RegisterRoutes(mux)
 
@@ -75,6 +78,17 @@ func (s *Server) Start(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
 	})
+
+	// WebSocket endpoint
+	mux.HandleFunc("/ws", s.hub.ServeWS)
+
+	// Web UI handler (if provided)
+	if webHandler != nil {
+		mux.Handle("/", webHandler)
+	}
+
+	// Start WebSocket hub in background
+	go s.hub.Run()
 
 	handler := rateLimitMiddleware(mux, s.cfg.RateLimit)
 	handler = loggingMiddleware(handler, s.log)

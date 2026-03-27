@@ -581,9 +581,13 @@ func (m *mockReadConn) Read(p []byte) (n int, err error) {
 }
 
 func (m *mockReadConn) Write(p []byte) (int, error) { return len(p), nil }
-func (m *mockReadConn) Close() error                 { m.closed = true; return nil }
-func (m *mockReadConn) LocalAddr() net.Addr          { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234} }
-func (m *mockReadConn) RemoteAddr() net.Addr         { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5678} }
+func (m *mockReadConn) Close() error                { m.closed = true; return nil }
+func (m *mockReadConn) LocalAddr() net.Addr {
+	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}
+}
+func (m *mockReadConn) RemoteAddr() net.Addr {
+	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5678}
+}
 func (m *mockReadConn) SetDeadline(t time.Time) error      { return nil }
 func (m *mockReadConn) SetReadDeadline(t time.Time) error  { return nil }
 func (m *mockReadConn) SetWriteDeadline(t time.Time) error { return nil }

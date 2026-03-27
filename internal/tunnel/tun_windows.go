@@ -102,6 +102,7 @@ func guidToString(g *guid) string {
 // bytesFromPtr creates a byte slice from a C pointer and length.
 // The //go:nocheckptr directive prevents false positive race detector warnings
 // when working with pointers returned from Wintun DLL syscalls.
+//
 //go:nocheckptr
 func bytesFromPtr(ptr uintptr, length int) []byte {
 	return unsafe.Slice((*byte)(unsafe.Pointer(ptr)), length)
@@ -109,6 +110,7 @@ func bytesFromPtr(ptr uintptr, length int) []byte {
 
 // ptrToBytePtr converts a uintptr to a *byte for C interop.
 // The //go:nocheckptr directive prevents false positive race detector warnings.
+//
 //go:nocheckptr
 func ptrToBytePtr(ptr uintptr) *byte {
 	return (*byte)(unsafe.Pointer(ptr))

@@ -59,3 +59,6 @@ coverage.html
 
 # OS files
 Thumbs.db
+
+
+node_modules/

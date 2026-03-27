@@ -314,10 +314,10 @@ func (m *mockErrorConn) Read(p []byte) (n int, err error) {
 	return 0, fmt.Errorf("unexpected read")
 }
 
-func (m *mockErrorConn) Close() error                     { return nil }
-func (m *mockErrorConn) LocalAddr() net.Addr              { return &net.UDPAddr{} }
-func (m *mockErrorConn) RemoteAddr() net.Addr             { return &net.UDPAddr{} }
-func (m *mockErrorConn) SetDeadline(t time.Time) error    { return nil }
+func (m *mockErrorConn) Close() error                       { return nil }
+func (m *mockErrorConn) LocalAddr() net.Addr                { return &net.UDPAddr{} }
+func (m *mockErrorConn) RemoteAddr() net.Addr               { return &net.UDPAddr{} }
+func (m *mockErrorConn) SetDeadline(t time.Time) error      { return nil }
 func (m *mockErrorConn) SetReadDeadline(t time.Time) error  { return nil }
 func (m *mockErrorConn) SetWriteDeadline(t time.Time) error { return nil }
 

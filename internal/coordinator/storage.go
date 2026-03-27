@@ -21,10 +21,10 @@ const (
 // Node represents a registered mesh node.
 type Node struct {
 	ID           string     `json:"id"`
-	PublicKey    string     `json:"public_key"`    // base64 X25519 public key
+	PublicKey    string     `json:"public_key"` // base64 X25519 public key
 	Hostname     string     `json:"hostname"`
-	VirtualIP    string     `json:"virtual_ip"`    // e.g. "100.64.0.2"
-	Endpoint     string     `json:"endpoint"`      // last known UDP endpoint "ip:port"
+	VirtualIP    string     `json:"virtual_ip"` // e.g. "100.64.0.2"
+	Endpoint     string     `json:"endpoint"`   // last known UDP endpoint "ip:port"
 	Status       NodeStatus `json:"status"`
 	AuthKeyID    string     `json:"auth_key_id,omitempty"`
 	Routes       []string   `json:"routes,omitempty"`
@@ -35,19 +35,19 @@ type Node struct {
 
 // AuthKey is a pre-shared key that allows a node to register.
 type AuthKey struct {
-	ID         string    `json:"id"`
-	Key        string    `json:"key"`     // random secret the node presents
-	Ephemeral  bool      `json:"ephemeral"` // single-use key
-	ExpiresAt  time.Time `json:"expires_at"`
-	CreatedAt  time.Time `json:"created_at"`
-	UsedAt     time.Time `json:"used_at,omitempty"`
-	Used       bool      `json:"used"`
+	ID        string    `json:"id"`
+	Key       string    `json:"key"`       // random secret the node presents
+	Ephemeral bool      `json:"ephemeral"` // single-use key
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UsedAt    time.Time `json:"used_at,omitempty"`
+	Used      bool      `json:"used"`
 }
 
 // ACLPolicy is the network access control policy.
 type ACLPolicy struct {
-	Version int             `json:"version"`
-	Rules   []ACLRule       `json:"rules"`
+	Version int       `json:"version"`
+	Rules   []ACLRule `json:"rules"`
 }
 
 // ACLRule describes a single allow/deny rule.
@@ -60,11 +60,11 @@ type ACLRule struct {
 
 // State is the complete coordinator state serialised to disk.
 type State struct {
-	Version   int       `json:"version"`
-	Nodes     []*Node   `json:"nodes"`
+	Version   int        `json:"version"`
+	Nodes     []*Node    `json:"nodes"`
 	AuthKeys  []*AuthKey `json:"auth_keys"`
-	ACL       ACLPolicy `json:"acl"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ACL       ACLPolicy  `json:"acl"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // Store is a thread-safe in-memory state store backed by a JSON file.

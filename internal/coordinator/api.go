@@ -13,11 +13,11 @@ import (
 
 // RegisterRequest is the body of POST /api/v1/register.
 type RegisterRequest struct {
-	PublicKey string   `json:"public_key"`
-	Hostname  string   `json:"hostname"`
-	AuthKey   string   `json:"auth_key"`
-	Routes    []string `json:"routes,omitempty"`
-	IsExitNode bool    `json:"is_exit_node,omitempty"`
+	PublicKey  string   `json:"public_key"`
+	Hostname   string   `json:"hostname"`
+	AuthKey    string   `json:"auth_key"`
+	Routes     []string `json:"routes,omitempty"`
+	IsExitNode bool     `json:"is_exit_node,omitempty"`
 }
 
 // RegisterResponse is the response of POST /api/v1/register.
@@ -39,9 +39,9 @@ type UpdateEndpointRequest struct {
 
 // API holds the HTTP handler dependencies.
 type API struct {
-	store  *Store
-	pool   *IPPool
-	poller *Poller
+	store        *Store
+	pool         *IPPool
+	poller       *Poller
 	approvalMode string // "auto" or "manual"
 }
 
@@ -64,6 +64,8 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/peers", a.handlePeers)
 	mux.HandleFunc("/api/v1/derp-map", a.handleDERPMap)
 	mux.HandleFunc("/api/v1/ping", a.handlePing)
+	mux.HandleFunc("/api/v1/topology", a.handleTopology)
+	mux.HandleFunc("/api/v1/status", a.handleStatus)
 	mux.HandleFunc("/api/v1/admin/nodes", a.handleAdminNodes)
 	mux.HandleFunc("/api/v1/admin/nodes/", a.handleAdminNodes) // for DELETE /nodes/{id} and POST /nodes/{id}/approve
 	mux.HandleFunc("/api/v1/admin/acl", a.handleAdminACL)
@@ -462,4 +464,98 @@ func generateID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// TopologyConnection represents a connection between two nodes in the mesh
+type TopologyConnection struct {
+	From    string  `json:"from"`
+	To      string  `json:"to"`
+	Type    string  `json:"type"` // "direct" or "relay"
+	Latency float64 `json:"latency,omitempty"`
+}
+
+// TopologyResponse represents the mesh topology
+type TopologyResponse struct {
+	Nodes       []*Node              `json:"nodes"`
+	Connections []TopologyConnection `json:"connections"`
+}
+
+// handleTopology handles GET /api/v1/topology.
+func (a *API) handleTopology(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	nodes := a.store.ListNodes()
+
+	// Build connections based on node endpoints
+	// In a real implementation, this would come from the mesh state
+	var connections []TopologyConnection
+	for i, n1 := range nodes {
+		if n1.Status != NodeStatusActive {
+			continue
+		}
+		for j, n2 := range nodes {
+			if i >= j || n2.Status != NodeStatusActive {
+				continue
+			}
+			// Determine if direct connection is possible
+			connType := "relay"
+			if n1.Endpoint != "" && n2.Endpoint != "" {
+				// If both have endpoints, assume direct connection
+				connType = "direct"
+			}
+			connections = append(connections, TopologyConnection{
+				From:    n1.ID,
+				To:      n2.ID,
+				Type:    connType,
+				Latency: 0, // Would be measured in real implementation
+			})
+		}
+	}
+
+	writeJSON(w, TopologyResponse{
+		Nodes:       nodes,
+		Connections: connections,
+	})
+}
+
+// SystemStatus represents the current system status
+type SystemStatus struct {
+	Uptime         int64   `json:"uptime"`
+	MemoryUsage    int64   `json:"memoryUsage"`
+	CPUUsage       float64 `json:"cpuUsage"`
+	Goroutines     int     `json:"goroutines"`
+	PeersConnected int     `json:"peersConnected"`
+	TotalRx        int64   `json:"totalRx"`
+	TotalTx        int64   `json:"totalTx"`
+}
+
+// handleStatus handles GET /api/v1/status.
+func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	nodes := a.store.ListNodes()
+	activeCount := 0
+	for _, n := range nodes {
+		if n.Status == NodeStatusActive {
+			activeCount++
+		}
+	}
+
+	status := SystemStatus{
+		Uptime:         0, // Would be tracked in real implementation
+		MemoryUsage:    0,
+		CPUUsage:       0,
+		Goroutines:     0,
+		PeersConnected: activeCount,
+		TotalRx:        0,
+		TotalTx:        0,
+	}
+
+	writeJSON(w, status)
 }

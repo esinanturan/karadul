@@ -121,7 +121,7 @@ func openUtun(unit int) (int, string, error) {
 
 func (t *darwinTUN) Name() string { return t.name }
 func (t *darwinTUN) MTU() int     { return t.mtu }
-func (t *darwinTUN) Close() error  { return t.file.Close() }
+func (t *darwinTUN) Close() error { return t.file.Close() }
 
 // macOS utun prepends a 4-byte AF header to every packet.
 // Read strips it; Write prepends it.

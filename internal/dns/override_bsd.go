@@ -8,4 +8,3 @@ import "fmt"
 func Override(listenAddr string) (restore func() error, err error) {
 	return nil, fmt.Errorf("DNS override on BSD is not yet implemented")
 }
-

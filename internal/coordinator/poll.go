@@ -12,9 +12,9 @@ const (
 
 // NetworkState is the snapshot sent to nodes during a poll response.
 type NetworkState struct {
-	Version   int64   `json:"version"`
-	UpdatedAt string  `json:"updated_at"`
-	Nodes     []*Node `json:"nodes"`
+	Version   int64     `json:"version"`
+	UpdatedAt string    `json:"updated_at"`
+	Nodes     []*Node   `json:"nodes"`
 	ACL       ACLPolicy `json:"acl"`
 	DERPMap   *DERPMap  `json:"derp_map,omitempty"`
 }

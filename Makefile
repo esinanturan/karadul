@@ -114,3 +114,22 @@ setup-homebrew: ## Setup Homebrew tap
 
 ci: fmt vet test-race build ## Run full CI pipeline
 	@echo "✅ CI checks passed"
+
+# ==================== WEB UI ====================
+
+web-install: ## Install web dependencies
+	cd $(WEB_DIR) && npm install
+
+web-dev: ## Run web development server
+	cd $(WEB_DIR) && npm run dev
+
+web-build: ## Build web UI for production
+	cd $(WEB_DIR) && npm run build
+
+web-lint: ## Lint web UI code
+	cd $(WEB_DIR) && npm run lint
+
+web-preview: ## Preview production build
+	cd $(WEB_DIR) && npm run preview
+
+build-with-web: web-build build ## Build with embedded web UI

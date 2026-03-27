@@ -121,7 +121,7 @@ func TestValidateServerConfig_TLSRequiresCert(t *testing.T) {
 func TestValidateNodeConfig_BadLogLevel(t *testing.T) {
 	cfg := DefaultNodeConfig()
 	cfg.ServerURL = "https://coord.example.com" // required
-	cfg.LogLevel = "verbosemax"                  // not a real level
+	cfg.LogLevel = "verbosemax"                 // not a real level
 	if err := ValidateNodeConfig(cfg); err == nil {
 		t.Fatal("invalid log level should fail")
 	}
