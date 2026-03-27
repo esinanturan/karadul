@@ -27,11 +27,19 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          ui: ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-tooltip'],
-          flow: ['@xyflow/react'],
-          charts: ['recharts'],
+        manualChunks(id) {
+          if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/')) {
+            return 'vendor'
+          }
+          if (id.includes('node_modules/@radix-ui/')) {
+            return 'ui'
+          }
+          if (id.includes('node_modules/@xyflow/')) {
+            return 'flow'
+          }
+          if (id.includes('node_modules/recharts/')) {
+            return 'charts'
+          }
         },
       },
     },
