@@ -53,6 +53,7 @@ coverage.html
 !config.example.json
 !.github/**/*.json
 !web/package*.json
+!web/package-lock.json
 
 # Log files
 *.log
