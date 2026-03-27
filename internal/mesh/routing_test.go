@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	klog "github.com/ersinkoc/karadul/internal/log"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 func TestRouter_DirectVIP(t *testing.T) {

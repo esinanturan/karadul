@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	klog "github.com/ersinkoc/karadul/internal/log"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 // BenchmarkRoutePacket_VIP measures direct VIP lookup (rule 1 in RoutePacket).

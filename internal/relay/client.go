@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	klog "github.com/ersinkoc/karadul/internal/log"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 const (

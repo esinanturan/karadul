@@ -1,4 +1,4 @@
-module github.com/ersinkoc/karadul
+module github.com/karadul/karadul
 
 go 1.25.0
 

@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ersinkoc/karadul/internal/config"
-	klog "github.com/ersinkoc/karadul/internal/log"
+	"github.com/karadul/karadul/internal/config"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 // Server is the Karadul coordination server.

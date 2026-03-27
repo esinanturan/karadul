@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	klog "github.com/ersinkoc/karadul/internal/log"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 // testDialUDP is a test hook to inject mock connections for testing.

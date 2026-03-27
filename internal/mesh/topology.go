@@ -5,8 +5,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/ersinkoc/karadul/internal/coordinator"
-	klog "github.com/ersinkoc/karadul/internal/log"
+	"github.com/karadul/karadul/internal/coordinator"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 // TopologyManager applies NetworkState updates from the coordination server to the peer manager.

@@ -126,6 +126,9 @@ web-dev: ## Run web development server
 
 web-build: ## Build web UI for production
 	cd $(WEB_DIR) && npm run build
+	@echo "Copying web build to internal/web/dist/..."
+	rm -rf internal/web/dist/*
+	cp -r $(WEB_DIR)/dist/* internal/web/dist/
 
 web-lint: ## Lint web UI code
 	cd $(WEB_DIR) && npm run lint

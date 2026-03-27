@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	klog "github.com/ersinkoc/karadul/internal/log"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 // TestStart_ListenError verifies Start returns error when listen fails.

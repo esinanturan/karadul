@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	klog "github.com/ersinkoc/karadul/internal/log"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 // ConnectFunc is called when a new peer should have a tunnel established.

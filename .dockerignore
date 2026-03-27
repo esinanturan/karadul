@@ -1,0 +1,49 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+!README.md
+LICENSE
+CONTRIBUTING.md
+
+# Build artifacts
+dist/
+build/
+karadul
+*.exe
+*.test
+
+# Web (rebuilt in Docker)
+web/node_modules/
+web/.vitest/
+web/coverage/
+
+# Test / coverage
+coverage.txt
+coverage.html
+coverage/
+*.out
+*.cov
+
+# Data / runtime
+data/
+logs/
+*.log
+*.pem
+*.key
+*.crt
+
+# CI / GitHub
+.github/

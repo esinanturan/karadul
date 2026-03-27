@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	klog "github.com/ersinkoc/karadul/internal/log"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 // startTestServer starts a test DERP server and returns its address.

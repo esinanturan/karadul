@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	klog "github.com/ersinkoc/karadul/internal/log"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 func newMgrForTest(t *testing.T) *Manager {

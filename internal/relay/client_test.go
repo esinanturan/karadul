@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	klog "github.com/ersinkoc/karadul/internal/log"
+	klog "github.com/karadul/karadul/internal/log"
 )
 
 // TestRun_ExitsOnContextCancel verifies Run returns when context is cancelled.

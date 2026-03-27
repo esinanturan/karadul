@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ersinkoc/karadul/internal/crypto"
+	"github.com/karadul/karadul/internal/crypto"
 )
 
 const (

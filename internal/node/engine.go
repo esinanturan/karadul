@@ -18,17 +18,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ersinkoc/karadul/internal/auth"
-	"github.com/ersinkoc/karadul/internal/config"
-	"github.com/ersinkoc/karadul/internal/coordinator"
-	"github.com/ersinkoc/karadul/internal/crypto"
-	"github.com/ersinkoc/karadul/internal/dns"
-	klog "github.com/ersinkoc/karadul/internal/log"
-	"github.com/ersinkoc/karadul/internal/mesh"
-	"github.com/ersinkoc/karadul/internal/nat"
-	"github.com/ersinkoc/karadul/internal/protocol"
-	"github.com/ersinkoc/karadul/internal/relay"
-	"github.com/ersinkoc/karadul/internal/tunnel"
+	"github.com/karadul/karadul/internal/auth"
+	"github.com/karadul/karadul/internal/config"
+	"github.com/karadul/karadul/internal/coordinator"
+	"github.com/karadul/karadul/internal/crypto"
+	"github.com/karadul/karadul/internal/dns"
+	klog "github.com/karadul/karadul/internal/log"
+	"github.com/karadul/karadul/internal/mesh"
+	"github.com/karadul/karadul/internal/nat"
+	"github.com/karadul/karadul/internal/protocol"
+	"github.com/karadul/karadul/internal/relay"
+	"github.com/karadul/karadul/internal/tunnel"
 )
 
 const (
