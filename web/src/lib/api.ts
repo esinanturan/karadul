@@ -139,14 +139,26 @@ export function useAuthKeys() {
   })
 }
 
+/** Convert frontend expiry values (e.g. "7d") to Go time.ParseDuration format (e.g. "168h") */
+function toGoDuration(val: string): string {
+  const match = val.match(/^(\d+)([hdm])$/)
+  if (!match) return val
+  const n = parseInt(match[1], 10)
+  const unit = match[2]
+  if (unit === "d") return `${n * 24}h`
+  if (unit === "m") return `${n}m`
+  return `${n}h`
+}
+
 export function useCreateAuthKey() {
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async (expiresIn?: string) => {
+      const expiry = expiresIn ? toGoDuration(expiresIn) : ""
       return fetchApi<AuthKey>("/v1/admin/auth-keys", {
         method: "POST",
-        body: JSON.stringify({ expiresIn }),
+        body: JSON.stringify({ expiry }),
       })
     },
     onSuccess: () => {
