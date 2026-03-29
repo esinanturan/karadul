@@ -28,7 +28,7 @@ func newTestAPI(t *testing.T) (*API, *httptest.Server) {
 		t.Fatal(err)
 	}
 	poller := NewPoller(store)
-	api := NewAPI(store, pool, poller, "auto")
+	api := NewAPI(store, pool, poller, "auto", nil)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
@@ -846,7 +846,7 @@ func TestAdminNodes_Approve(t *testing.T) {
 	store, _ := NewStore(filepath.Join(dir, "state.json"))
 	pool, _ := NewIPPool("100.64.0.0/10")
 	poller := NewPoller(store)
-	api := NewAPI(store, pool, poller, "manual") // manual approval mode
+	api := NewAPI(store, pool, poller, "manual", nil) // manual approval mode
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
@@ -1644,7 +1644,7 @@ func TestAdminACL_StoreSetACLError(t *testing.T) {
 	store, _ := NewStore(storePath)
 	pool, _ := NewIPPool("100.64.0.0/10")
 	poller := NewPoller(store)
-	api := NewAPI(store, pool, poller, "auto")
+	api := NewAPI(store, pool, poller, "auto", nil)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
@@ -1704,7 +1704,7 @@ func TestRegister_IPPoolExhausted(t *testing.T) {
 	_ = store.AddAuthKey(ak)
 
 	poller := NewPoller(store)
-	api := NewAPI(store, pool, poller, "auto")
+	api := NewAPI(store, pool, poller, "auto", nil)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
@@ -1754,7 +1754,7 @@ func TestRegister_StoreAddNodeError(t *testing.T) {
 	}
 
 	poller := NewPoller(store)
-	api := NewAPI(store, pool, poller, "auto")
+	api := NewAPI(store, pool, poller, "auto", nil)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
@@ -1800,7 +1800,7 @@ func TestAdminAuthKeys_StoreAddAuthKeyError(t *testing.T) {
 	}
 
 	poller := NewPoller(store)
-	api := NewAPI(store, pool, poller, "auto")
+	api := NewAPI(store, pool, poller, "auto", nil)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)

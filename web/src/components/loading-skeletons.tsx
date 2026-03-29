@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 
+/** @internal Test-only export — not used in production code */
 export function DashboardSkeleton() {
   return (
     <div className="space-y-6">

@@ -1,4 +1,5 @@
-import type { Node, Peer, MeshTopology, SystemStats, AuthKey } from "@/lib/store"
+import type { Node, Peer, MeshTopology, SystemStats } from "@/lib/store"
+import type { AuthKey } from "@/lib/api"
 
 export const mockNodes: Node[] = [
   {

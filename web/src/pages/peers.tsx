@@ -32,6 +32,12 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -98,6 +104,7 @@ export function PeersPage() {
   const { data: peers, isLoading, error, refetch } = usePeers()
   const [filter, setFilter] = useState<string>("all")
   const [searchQuery, setSearchQuery] = useState("")
+  const [selectedPeer, setSelectedPeer] = useState<Peer | null>(null)
 
   const filteredPeers = peers?.filter((peer) => {
     const matchesFilter =
@@ -351,8 +358,9 @@ export function PeersPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem>View Details</DropdownMenuItem>
-                              <DropdownMenuItem>Reconnect</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => setSelectedPeer(peer)}>
+                                View Details
+                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
@@ -365,6 +373,50 @@ export function PeersPage() {
           </Tabs>
         </CardContent>
       </Card>
+
+      <Dialog open={!!selectedPeer} onOpenChange={(open) => !open && setSelectedPeer(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{selectedPeer?.hostname}</DialogTitle>
+          </DialogHeader>
+          {selectedPeer && (
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Virtual IP</span>
+                <span className="font-mono">{selectedPeer.virtualIP}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">State</span>
+                <ConnectionBadge state={selectedPeer.state} />
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Endpoint</span>
+                <span>{selectedPeer.endpoint || "N/A"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Latency</span>
+                <span>{selectedPeer.latency ? `${selectedPeer.latency}ms` : "N/A"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Received</span>
+                <span>{formatBytes(selectedPeer.rxBytes)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Sent</span>
+                <span>{formatBytes(selectedPeer.txBytes)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Last Handshake</span>
+                <span>
+                  {selectedPeer.lastHandshake
+                    ? new Date(selectedPeer.lastHandshake).toLocaleString()
+                    : "Never"}
+                </span>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

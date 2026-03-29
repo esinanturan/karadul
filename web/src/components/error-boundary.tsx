@@ -33,6 +33,7 @@ interface ConnectionErrorProps {
   onRetry?: () => void
 }
 
+/** @internal Test-only export — not used in production code */
 export function ConnectionError({ onRetry }: ConnectionErrorProps) {
   return (
     <div className="flex flex-col items-center justify-center py-12 space-y-4">

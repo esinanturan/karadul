@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react"
+import { useCallback, useEffect, useMemo } from "react"
 import {
   ReactFlow,
   Background,
@@ -105,11 +105,10 @@ export function TopologyPage() {
   const [flowEdges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
 
   // Update nodes/edges when topology changes
-  useMemo(() => {
+  useEffect(() => {
     setNodes(initialNodes)
     setEdges(initialEdges)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialNodes, initialEdges])
+  }, [initialNodes, initialEdges, setNodes, setEdges])
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     const selectedNode = nodes?.find((n) => n.id === node.id)

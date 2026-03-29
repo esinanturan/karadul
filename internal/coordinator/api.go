@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/karadul/karadul/internal/config"
 )
 
 // RegisterRequest is the body of POST /api/v1/register.
@@ -43,17 +45,21 @@ type API struct {
 	pool         *IPPool
 	poller       *Poller
 	approvalMode string // "auto" or "manual"
+	cfg          *config.ServerConfig
 }
 
 // NewAPI creates an API handler set.
-func NewAPI(store *Store, pool *IPPool, poller *Poller, approvalMode string) *API {
+func NewAPI(store *Store, pool *IPPool, poller *Poller, approvalMode string, cfg *config.ServerConfig) *API {
 	return &API{
 		store:        store,
 		pool:         pool,
 		poller:       poller,
 		approvalMode: approvalMode,
+		cfg:          cfg,
 	}
 }
+
+// RegisterRoutes attaches all handlers to mux.
 
 // RegisterRoutes attaches all handlers to mux.
 func (a *API) RegisterRoutes(mux *http.ServeMux) {
@@ -558,4 +564,26 @@ func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, status)
+}
+
+// handleAdminConfig handles GET/PUT /api/v1/admin/config.
+func (a *API) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, a.cfg)
+	case http.MethodPut:
+		var cfg config.ServerConfig
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+		}
+		// Preserve TLS config from existing if not provided in update.
+		if cfg.TLS == (config.TLSConfig{}) {
+		cfg.TLS = a.cfg.TLS
+	}
+		*a.cfg = cfg
+		writeJSON(w, cfg)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 }

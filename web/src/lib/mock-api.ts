@@ -193,6 +193,7 @@ const mockACL: ACLRule[] = [
 const delay = (ms: number = 300) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Mock API client
+/** @internal Test-only export — not used in production code */
 export const mockApi = {
   // Nodes
   async getNodes(): Promise<Node[]> {
@@ -282,6 +283,7 @@ function parseDuration(duration: string): number {
 }
 
 // Check if we should use mock API - only when explicitly enabled via env var
+/** @internal Test-only export — not used in production code */
 export const shouldUseMockApi = (): boolean => {
   return import.meta.env.VITE_USE_MOCK_API === "true"
 }

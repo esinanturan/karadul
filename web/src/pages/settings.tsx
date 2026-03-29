@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import {
   Settings,
   Key,
@@ -69,19 +69,22 @@ export function SettingsPage() {
   const { data: authKeys, isLoading, error, refetch } = useAuthKeys()
   const createAuthKey = useCreateAuthKey()
   const deleteAuthKey = useDeleteAuthKey()
-  const { data: aclData, isLoading: aclLoading } = useACL()
+  const { data: aclData, isLoading: aclLoading, error: aclError } = useACL()
   const updateACL = useUpdateACL()
   const [newKeyExpiresIn, setNewKeyExpiresIn] = useState<string>("")
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [aclRules, setAclRules] = useState<ACLRule[]>([])
 
-  // Sync ACL rules from API data
-  useState(() => {
-    if (aclData?.rules) {
-      setAclRules(aclData.rules)
+  // Sync ACL rules from API data (only when rules actually change)
+  const aclRulesJson = JSON.stringify(aclData?.rules)
+  useEffect(() => {
+    const rules = aclData?.rules
+    if (rules) {
+      setAclRules(rules)
     }
-  })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aclRulesJson])
 
   const handleAddACLRule = () => {
     setAclRules((prev) => [
@@ -371,7 +374,13 @@ export function SettingsPage() {
               </Button>
             </CardHeader>
             <CardContent>
-              {aclLoading ? (
+              {aclError ? (
+                <ErrorAlert
+                  title="Failed to load ACL rules"
+                  message={aclError.message}
+                  onRetry={() => refetch()}
+                />
+              ) : aclLoading ? (
                 <div className="space-y-3">
                   {Array.from({ length: 3 }).map((_, i) => (
                     <div key={i} className="flex items-center gap-4">

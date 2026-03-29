@@ -30,7 +30,7 @@ interface WebSocketProviderProps {
 
 export function WebSocketProvider({
   children,
-  url = `ws://${window.location.host}/ws`,
+  url = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`,
 }: WebSocketProviderProps) {
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)

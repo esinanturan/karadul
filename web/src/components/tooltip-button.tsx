@@ -13,6 +13,7 @@ interface TooltipButtonProps extends React.ComponentProps<typeof Button> {
   children: React.ReactNode
 }
 
+/** @internal Test-only export — not used in production code */
 export function TooltipButton({
   tooltip,
   children,

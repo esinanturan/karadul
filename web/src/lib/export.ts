@@ -105,6 +105,7 @@ export function exportPeersJSON(peers: Peer[]): void {
 
 /**
  * Export auth keys to CSV
+ * @internal Test-only export — not used in production code
  */
 export function exportAuthKeysCSV(keys: AuthKeyExport[]): void {
   const csv = toCSV<AuthKeyExport>(keys, ["id", "key", "createdAt", "expiresAt", "usedBy"])

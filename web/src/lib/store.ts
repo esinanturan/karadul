@@ -58,14 +58,6 @@ export interface SystemStats {
 
 export type Stats = SystemStats
 
-export interface AuthKey {
-  id: string
-  key: string
-  createdAt: string
-  expiresAt?: string
-  usedBy?: string
-}
-
 export interface TrafficPoint {
   time: string
   rx: number
