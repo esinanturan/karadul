@@ -64,5 +64,8 @@ coverage.html
 # OS files
 Thumbs.db
 
-
+# Node modules
 node_modules/
+
+# Web build output (rebuilt via `make web-build`)
+web/dist/

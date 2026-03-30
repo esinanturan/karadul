@@ -35,6 +35,9 @@ type ServerConfig struct {
 
 	// RateLimit is the max requests/second per IP (0 = disabled).
 	RateLimit int `json:"rate_limit,omitempty"`
+
+	// AllowedOrigins lists permitted WebSocket origins. Empty = same-origin only.
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
 }
 
 // TLSConfig holds TLS certificate configuration.

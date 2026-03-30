@@ -3,6 +3,7 @@ package coordinator
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"runtime"
 	"sync"
 	"time"
@@ -18,8 +19,13 @@ type Hub struct {
 	unregister chan *Client
 	store      *Store
 	cpuSampler *cpuSampler
-	mu         sync.RWMutex
-	startTime  time.Time
+
+	// allowedOrigins controls which origins may connect via WebSocket.
+	// An empty slice restricts to same-origin only (Host header matches Origin).
+	allowedOrigins []string
+
+	mu        sync.RWMutex
+	startTime time.Time
 }
 
 // Client represents a WebSocket client
@@ -31,20 +37,23 @@ type Client struct {
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins in development
+		return true // overridden per-hub in checkOrigin
 	},
 }
 
-// NewHub creates a new WebSocket hub
-func NewHub(store *Store) *Hub {
+// NewHub creates a new WebSocket hub.
+// allowedOrigins controls which origins may connect via WebSocket;
+// an empty slice restricts to same-origin only.
+func NewHub(store *Store, allowedOrigins []string) *Hub {
 	return &Hub{
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		store:      store,
-		cpuSampler: newCPUSampler(5 * time.Second),
-		startTime:  time.Now(),
+		clients:        make(map[*Client]bool),
+		broadcast:      make(chan []byte),
+		register:       make(chan *Client),
+		unregister:     make(chan *Client),
+		store:          store,
+		cpuSampler:     newCPUSampler(5 * time.Second),
+		allowedOrigins: allowedOrigins,
+		startTime:      time.Now(),
 	}
 }
 
@@ -293,8 +302,43 @@ func buildTopologyFromNodes(nodes []*Node) map[string]interface{} {
 	}
 }
 
+// checkOrigin verifies the WebSocket upgrade request's Origin header.
+// If allowedOrigins is empty, only same-origin requests are permitted
+// (Origin must be empty or match the Host header).
+func (h *Hub) checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true // non-browser clients
+	}
+
+	// If no explicit allow-list, restrict to same-origin.
+	if len(h.allowedOrigins) == 0 {
+		host := r.Host
+		if host == "" {
+			return false
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return u.Host == host
+	}
+
+	for _, ao := range h.allowedOrigins {
+		if ao == "*" || ao == origin {
+			return true
+		}
+	}
+	return false
+}
+
 // ServeWS handles WebSocket connections
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	if !h.checkOrigin(r) {
+		http.Error(w, "origin not allowed", http.StatusForbidden)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return

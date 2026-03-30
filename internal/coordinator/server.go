@@ -55,7 +55,7 @@ func NewServer(cfg *config.ServerConfig, log *klog.Logger) (*Server, error) {
 
 	poller := NewPoller(store)
 	api := NewAPI(store, pool, poller, cfg.ApprovalMode, cfg)
-	hub := NewHub(store)
+	hub := NewHub(store, cfg.AllowedOrigins)
 
 	return &Server{
 		cfg:    cfg,
