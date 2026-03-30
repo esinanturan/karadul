@@ -77,12 +77,39 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/ping", a.handlePing)
 	mux.HandleFunc("/api/v1/topology", a.handleTopology)
 	mux.HandleFunc("/api/v1/status", a.handleStatus)
-	mux.HandleFunc("/api/v1/admin/nodes", a.handleAdminNodes)
-	mux.HandleFunc("/api/v1/admin/nodes/", a.handleAdminNodes) // for DELETE /nodes/{id} and POST /nodes/{id}/approve
-	mux.HandleFunc("/api/v1/admin/acl", a.handleAdminACL)
-	mux.HandleFunc("/api/v1/admin/auth-keys", a.handleAdminAuthKeys)
-	mux.HandleFunc("/api/v1/admin/auth-keys/", a.handleAdminAuthKeys) // for DELETE /auth-keys/{id}
-	mux.HandleFunc("/api/v1/admin/config", a.handleAdminConfig)
+
+	// Admin routes protected by bearer token when admin_secret is configured.
+	adminAuth := a.adminAuth()
+	adminMux := http.NewServeMux()
+	adminMux.HandleFunc("/api/v1/admin/nodes", a.handleAdminNodes)
+	adminMux.HandleFunc("/api/v1/admin/nodes/", a.handleAdminNodes)
+	adminMux.HandleFunc("/api/v1/admin/acl", a.handleAdminACL)
+	adminMux.HandleFunc("/api/v1/admin/auth-keys", a.handleAdminAuthKeys)
+	adminMux.HandleFunc("/api/v1/admin/auth-keys/", a.handleAdminAuthKeys)
+	adminMux.HandleFunc("/api/v1/admin/config", a.handleAdminConfig)
+	mux.Handle("/api/v1/admin/", adminAuth(adminMux))
+}
+
+// adminAuth returns middleware that requires a matching Bearer token for
+// admin endpoints. If no admin_secret is configured, it is a no-op.
+func (a *API) adminAuth() func(http.Handler) http.Handler {
+	secret := ""
+	if a.cfg != nil {
+		secret = a.cfg.AdminSecret
+	}
+	return func(next http.Handler) http.Handler {
+		if secret == "" {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != secret {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // handleRegister handles POST /api/v1/register.

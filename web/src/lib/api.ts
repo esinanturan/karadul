@@ -4,6 +4,21 @@ import { useKaradulStore, type Node, type Peer, type MeshTopology, type SystemSt
 
 const API_BASE = "/api"
 
+// Admin token helpers — stored in localStorage so it survives page reloads.
+const ADMIN_TOKEN_KEY = "karadul_admin_token"
+
+export function getAdminToken(): string {
+  return localStorage.getItem(ADMIN_TOKEN_KEY) ?? ""
+}
+
+export function setAdminToken(token: string) {
+  if (token) {
+    localStorage.setItem(ADMIN_TOKEN_KEY, token)
+  } else {
+    localStorage.removeItem(ADMIN_TOKEN_KEY)
+  }
+}
+
 // Query keys
 export const queryKeys = {
   nodes: ["nodes"] as const,
@@ -15,10 +30,20 @@ export const queryKeys = {
 
 // API client
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+
+  // Attach admin bearer token for admin endpoints.
+  if (path.startsWith("/v1/admin")) {
+    const token = getAdminToken()
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`
+    }
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     ...options,
   })
 

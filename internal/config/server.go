@@ -38,6 +38,10 @@ type ServerConfig struct {
 
 	// AllowedOrigins lists permitted WebSocket origins. Empty = same-origin only.
 	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+
+	// AdminSecret is a bearer token required for /api/v1/admin/* endpoints.
+	// If empty, admin endpoints are unprotected (use only in trusted networks).
+	AdminSecret string `json:"admin_secret,omitempty"`
 }
 
 // TLSConfig holds TLS certificate configuration.
