@@ -94,10 +94,10 @@ func VerifyRequestSignature(store *Store, r *http.Request, body []byte) error {
 		return fmt.Errorf("invalid signature")
 	}
 
-	// Reconstruct expected signature using the node's public key as the HMAC key.
-	// The node signs with its private key; we verify with its public key.
-	// (Asymmetric HMAC-check: both sides derive from the shared secret in practice,
-	//  but here we use public key as a simple HMAC key for request authentication.)
+	// Reconstruct expected signature. Both sides compute HMAC using the node's
+	// public key as the symmetric key. This provides request authentication:
+	// only a party that knows the public key can produce a valid signature.
+	// Note: this is symmetric (not asymmetric) — the public key is used directly.
 	msg := append([]byte(r.Method+"\n"+r.URL.RequestURI()+"\n"), body...)
 	var pk [32]byte
 	copy(pk[:], pubKeyBytes)

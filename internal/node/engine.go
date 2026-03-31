@@ -31,6 +31,22 @@ import (
 	"github.com/karadul/karadul/internal/tunnel"
 )
 
+// httpClient is a shared HTTP client with sensible timeouts for coordinator
+// communication. It replaces http.DefaultClient which has no transport limits.
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       60 * time.Second,
+	},
+}
+
 const (
 	keepaliveInterval    = 25 * time.Second
 	endpointRefreshEvery = 30 * time.Second // how often to re-STUN and report endpoint
@@ -299,14 +315,14 @@ func (e *Engine) register(ctx context.Context) error {
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("http: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(resp.Body)
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("status %d: %s", resp.StatusCode, bytes.TrimSpace(msg))
 	}
 
@@ -361,7 +377,7 @@ func (e *Engine) reportEndpoint(ctx context.Context, endpoint string) error {
 	httpReq.Header.Set("Content-Type", "application/json")
 	e.signRequest(httpReq, body)
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return err
 	}
@@ -434,7 +450,7 @@ func (e *Engine) poll(ctx context.Context, sinceVersion int64) (*coordinator.Net
 	req.Header.Set("Content-Type", "application/json")
 	e.signRequest(req, body)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -587,7 +603,7 @@ func (e *Engine) sendPing(ctx context.Context) error {
 		return err
 	}
 	e.signRequest(req, nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -1078,7 +1094,12 @@ func (e *Engine) serveLocalAPI(ctx context.Context) {
 	mux.HandleFunc("/exit-node/use", e.handleAPIExitNodeUse)
 	mux.HandleFunc("/shutdown", e.handleAPIShutdown)
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+	}
 	_ = srv.Serve(ln)
 }
 

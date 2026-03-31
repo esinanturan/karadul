@@ -428,7 +428,11 @@ func (s *Store) runGC() {
 			s.state.UpdatedAt = now
 			s.version++
 			s.notify()
-			_ = s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				// Log but don't block GC on disk write failures.
+				// The in-memory state is still consistent.
+				fmt.Fprintf(os.Stderr, "karadul: gc save error: %v\n", err)
+			}
 		}
 		s.mu.Unlock()
 	}()

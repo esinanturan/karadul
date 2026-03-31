@@ -243,6 +243,14 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		req.Hostname = clean
 	}
 
+	// Validate routes as CIDR format.
+	for _, r := range req.Routes {
+		if _, _, err := net.ParseCIDR(r); err != nil {
+			http.Error(w, "invalid route CIDR: "+r, http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Validate auth key.
 	ak, ok := a.store.GetAuthKey(req.AuthKey)
 	if !ok {
@@ -627,6 +635,12 @@ func (a *API) handleExchangeEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate targetPubKey is a proper 32-byte base64 key.
+	if !isValidPublicKey(req.TargetPubKey) {
+		http.Error(w, "invalid targetPubKey", http.StatusBadRequest)
+		return
+	}
+
 	// Update caller's endpoint.
 	callerPubKey := r.Header.Get(headerKey)
 	if callerNode, ok := a.store.GetNodeByPubKey(callerPubKey); ok {
@@ -712,15 +726,6 @@ func (a *API) handleAdminAuthKeys(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-}
-
-// readBody reads up to maxBytes from r.Body. Returns an error on failure.
-func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBytes))
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-	return body, nil
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

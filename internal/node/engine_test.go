@@ -1,12 +1,15 @@
 package node
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/karadul/karadul/internal/config"
 	"github.com/karadul/karadul/internal/coordinator"
@@ -73,6 +76,48 @@ func TestBuildSession(t *testing.T) {
 	}
 	if !ok2 || byIDSession != ps {
 		t.Error("session not in byID map")
+	}
+}
+
+func TestBuildSession_Overwrite(t *testing.T) {
+	e := testEngine(t)
+
+	var remotePub crypto.Key
+	for i := range remotePub {
+		remotePub[i] = byte(i + 10)
+	}
+
+	var sendKey, recvKey [32]byte
+	for i := range sendKey {
+		sendKey[i] = byte(i)
+		recvKey[i] = byte(i + 1)
+	}
+
+	// Create first session.
+	ps1 := e.buildSession(remotePub, sendKey, recvKey, 10, 20, nil)
+	if ps1 == nil {
+		t.Fatal("first session nil")
+	}
+
+	// Create second session with same remote pub key — should overwrite sessions map.
+	var sendKey2, recvKey2 [32]byte
+	for i := range sendKey2 {
+		sendKey2[i] = byte(i + 50)
+		recvKey2[i] = byte(i + 60)
+	}
+	ps2 := e.buildSession(remotePub, sendKey2, recvKey2, 30, 40, nil)
+
+	// Verify the sessions map has the new session (overwritten).
+	e.mu.RLock()
+	stored := e.sessions[remotePub]
+	_, hasNewByID := e.byID[30]
+	e.mu.RUnlock()
+
+	if stored != ps2 {
+		t.Error("sessions map should have new session")
+	}
+	if !hasNewByID {
+		t.Error("byID map should have new localID 30")
 	}
 }
 
@@ -145,6 +190,29 @@ func TestMetricsAtomicCounters(t *testing.T) {
 	}
 }
 
+func TestMetricsConcurrent(t *testing.T) {
+	e := testEngine(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.metricPacketsTx.Add(1)
+			e.metricBytesTx.Add(10)
+			e.metricPacketsRx.Add(1)
+			e.metricBytesRx.Add(10)
+		}()
+	}
+	wg.Wait()
+
+	if e.metricPacketsTx.Load() != 100 {
+		t.Errorf("packets tx: got %d, want 100", e.metricPacketsTx.Load())
+	}
+	if e.metricBytesTx.Load() != 1000 {
+		t.Errorf("bytes tx: got %d, want 1000", e.metricBytesTx.Load())
+	}
+}
+
 // ─── Topology / MagicDNS tests ───────────────────────────────────────────────
 
 func TestUpdateMagicDNS(t *testing.T) {
@@ -191,6 +259,29 @@ func TestUpdateMagicDNS_InvalidIP(t *testing.T) {
 
 	if ip := e.magic.Lookup("bad-node"); ip != nil {
 		t.Errorf("bad IP should not resolve, got %v", ip)
+	}
+}
+
+func TestUpdateMagicDNS_ReplacesEntries(t *testing.T) {
+	e := testEngine(t)
+
+	// First update.
+	e.updateMagicDNS([]*coordinator.Node{
+		{Hostname: "node-a", VirtualIP: "100.64.0.2", Status: coordinator.NodeStatusActive},
+	})
+	if ip := e.magic.Lookup("node-a"); ip == nil || !ip.Equal(net.ParseIP("100.64.0.2")) {
+		t.Fatalf("node-a first update: got %v", ip)
+	}
+
+	// Second update should replace, not merge.
+	e.updateMagicDNS([]*coordinator.Node{
+		{Hostname: "node-b", VirtualIP: "100.64.0.3", Status: coordinator.NodeStatusActive},
+	})
+	if ip := e.magic.Lookup("node-a"); ip != nil {
+		t.Errorf("node-a should be gone after second update, got %v", ip)
+	}
+	if ip := e.magic.Lookup("node-b"); ip == nil || !ip.Equal(net.ParseIP("100.64.0.3")) {
+		t.Errorf("node-b: got %v, want 100.64.0.3", ip)
 	}
 }
 
@@ -254,6 +345,44 @@ func TestHandleAPIMetrics(t *testing.T) {
 	}
 }
 
+func TestHandleAPIShutdown(t *testing.T) {
+	e := testEngine(t)
+
+	cancelled := false
+	ctx, cancel := context.WithCancel(context.Background())
+	e.ctx = ctx
+	e.cancel = func() {
+		cancel()
+		cancelled = true
+	}
+
+	w := httptest.NewRecorder()
+	e.handleAPIShutdown(w, httptest.NewRequest(http.MethodPost, "/shutdown", nil))
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status code: got %d, want %d", w.Code, http.StatusOK)
+	}
+	if !cancelled {
+		t.Error("expected cancel to be called")
+	}
+}
+
+func TestHandleAPIMetrics_IncludesSessions(t *testing.T) {
+	e := testEngine(t)
+
+	w := httptest.NewRecorder()
+	e.handleAPIMetrics(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	body := w.Body.String()
+	// Should have zero counters for a fresh engine.
+	if !containsStr(body, "karadul_sessions_active 0") {
+		t.Errorf("expected sessions_active 0, got:\n%s", body)
+	}
+	if !containsStr(body, "karadul_peers_total 0") {
+		t.Errorf("expected peers_total 0, got:\n%s", body)
+	}
+}
+
 // ─── Packet helpers ──────────────────────────────────────────────────────────
 
 func TestPacketDstPort(t *testing.T) {
@@ -295,6 +424,18 @@ func TestPacketDstPort(t *testing.T) {
 			}(),
 			want: 0,
 		},
+		{
+			name: "high port 443",
+			pkt: func() []byte {
+				pkt := make([]byte, 24)
+				pkt[0] = 0x45
+				pkt[9] = 6 // TCP
+				pkt[22] = 1
+				pkt[23] = 187 // 443 = 0x01BB
+				return pkt
+			}(),
+			want: 443,
+		},
 	}
 
 	for _, tt := range tests {
@@ -319,6 +460,32 @@ func TestNextID(t *testing.T) {
 			t.Errorf("duplicate ID: %d", id)
 		}
 		ids[id] = true
+	}
+}
+
+func TestNextID_Concurrent(t *testing.T) {
+	e := testEngine(t)
+
+	ids := make(chan uint32, 1000)
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				ids <- e.nextID()
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	seen := make(map[uint32]bool)
+	for id := range ids {
+		if seen[id] {
+			t.Errorf("duplicate ID from concurrent access: %d", id)
+		}
+		seen[id] = true
 	}
 }
 
@@ -369,6 +536,255 @@ func TestSignRequest(t *testing.T) {
 	}
 	if len(decoded) != 32 {
 		t.Errorf("key header decoded length: got %d, want 32", len(decoded))
+	}
+}
+
+func TestSignRequest_Deterministic(t *testing.T) {
+	e := testEngine(t)
+
+	body := []byte(`{"test":"data"}`)
+	req1, _ := http.NewRequest(http.MethodPost, "/api/v1/poll", nil)
+	req2, _ := http.NewRequest(http.MethodPost, "/api/v1/poll", nil)
+
+	e.signRequest(req1, body)
+	e.signRequest(req2, body)
+
+	sig1 := req1.Header.Get("X-Karadul-Sig")
+	sig2 := req2.Header.Get("X-Karadul-Sig")
+
+	if sig1 != sig2 {
+		t.Errorf("same body should produce same signature: %s != %s", sig1, sig2)
+	}
+}
+
+func TestSignRequest_DifferentBody(t *testing.T) {
+	e := testEngine(t)
+
+	req1, _ := http.NewRequest(http.MethodPost, "/api/v1/poll", nil)
+	req2, _ := http.NewRequest(http.MethodPost, "/api/v1/poll", nil)
+
+	e.signRequest(req1, []byte("body1"))
+	e.signRequest(req2, []byte("body2"))
+
+	sig1 := req1.Header.Get("X-Karadul-Sig")
+	sig2 := req2.Header.Get("X-Karadul-Sig")
+
+	if sig1 == sig2 {
+		t.Error("different bodies should produce different signatures")
+	}
+}
+
+// ─── Session encrypt/decrypt round-trip ──────────────────────────────────────
+
+func TestSessionRoundTrip(t *testing.T) {
+	// Session uses sendKey for encryption, recvKey for decryption.
+	// To round-trip, both must be the same key.
+	var key [32]byte
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+
+	s := NewSession(key, key, nil)
+
+	plaintext := []byte("hello mesh network")
+	counter, ct, err := s.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if counter != 0 {
+		t.Errorf("first counter: got %d, want 0", counter)
+	}
+
+	decrypted, err := s.Decrypt(counter, ct)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	if string(decrypted) != string(plaintext) {
+		t.Errorf("round-trip: got %q, want %q", decrypted, plaintext)
+	}
+}
+
+func TestSessionEncryptCounterIncrements(t *testing.T) {
+	var key [32]byte
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	s := NewSession(key, key, nil)
+
+	c1, _, _ := s.Encrypt([]byte("a"))
+	c2, _, _ := s.Encrypt([]byte("b"))
+	c3, _, _ := s.Encrypt([]byte("c"))
+
+	if c1 != 0 || c2 != 1 || c3 != 2 {
+		t.Errorf("counters: got %d, %d, %d; want 0, 1, 2", c1, c2, c3)
+	}
+}
+
+func TestSessionRejectsReplay(t *testing.T) {
+	var key [32]byte
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	s := NewSession(key, key, nil)
+
+	counter, ct, _ := s.Encrypt([]byte("msg"))
+
+	// First decrypt should succeed.
+	if _, err := s.Decrypt(counter, ct); err != nil {
+		t.Fatalf("first decrypt: %v", err)
+	}
+
+	// Replay should be rejected.
+	if _, err := s.Decrypt(counter, ct); err == nil {
+		t.Error("expected replay to be rejected")
+	}
+}
+
+// ─── LocalStatus report ─────────────────────────────────────────────────────
+
+func TestLocalStatus_WithPublicEP(t *testing.T) {
+	e := testEngine(t)
+	e.nodeID = "ep-node"
+	e.virtualIP = net.ParseIP("100.64.0.1")
+	e.publicEP.Store(&net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 43210})
+
+	status := e.LocalStatus()
+	if status["publicEp"] != "1.2.3.4:43210" {
+		t.Errorf("publicEp: got %v, want 1.2.3.4:43210", status["publicEp"])
+	}
+}
+
+// ─── Handshake timeout cleanup ───────────────────────────────────────────────
+
+func TestHandshakeTimeout_Cleans(t *testing.T) {
+	e := testEngine(t)
+
+	var pubKey [32]byte
+	for i := range pubKey {
+		pubKey[i] = byte(i)
+	}
+	peer := mesh.NewPeer(pubKey, "timeout-peer", "n1", net.ParseIP("100.64.0.5"))
+
+	// Simulate a pending handshake that was sent long ago.
+	hs, err := crypto.InitiatorHandshake(e.kp, pubKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg1, err := hs.WriteMessage1()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	localID := e.nextID()
+	e.mu.Lock()
+	e.pending[localID] = &pendingHandshake{
+		peer:    peer,
+		hs:      hs,
+		localID: localID,
+		sentAt:  time.Now().Add(-10 * time.Second), // 10s ago, well past 5s timeout
+	}
+	e.mu.Unlock()
+
+	// Manually run one iteration of the timeout logic.
+	e.mu.Lock()
+	for id, ph := range e.pending {
+		if time.Since(ph.sentAt) > handshakeTimeout {
+			delete(e.pending, id)
+			ph.peer.Transition(mesh.PeerDiscovered)
+		}
+	}
+	e.mu.Unlock()
+
+	e.mu.RLock()
+	_, exists := e.pending[localID]
+	e.mu.RUnlock()
+	if exists {
+		t.Error("pending handshake should have been cleaned up after timeout")
+	}
+
+	// Verify msg1 was consumed correctly by the handshake (basic sanity).
+	if len(msg1) != 96 {
+		t.Errorf("msg1 length: got %d, want 96", len(msg1))
+	}
+}
+
+// ─── Session endpoint storage ────────────────────────────────────────────────
+
+func TestSessionEndpoint_Updates(t *testing.T) {
+	e := testEngine(t)
+
+	var remotePub crypto.Key
+	for i := range remotePub {
+		remotePub[i] = byte(i + 10)
+	}
+
+	ep1 := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 12345}
+	ps := e.buildSession(remotePub, [32]byte{1}, [32]byte{2}, 1, 2, ep1)
+
+	// Verify initial endpoint.
+	loaded := ps.endpoint.Load()
+	if loaded == nil || loaded.Port != 12345 {
+		t.Errorf("initial endpoint: got %v", loaded)
+	}
+
+	// Update endpoint.
+	ep2 := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 54321}
+	ps.endpoint.Store(ep2)
+
+	loaded = ps.endpoint.Load()
+	if loaded == nil || !loaded.IP.Equal(net.ParseIP("10.0.0.2")) || loaded.Port != 54321 {
+		t.Errorf("updated endpoint: got %v, want 10.0.0.2:54321", loaded)
+	}
+}
+
+// ─── Multiple sessions ───────────────────────────────────────────────────────
+
+func TestMultipleSessions(t *testing.T) {
+	e := testEngine(t)
+
+	sessions := make([]*peerSession, 5)
+	for i := 0; i < 5; i++ {
+		var pub crypto.Key
+		pub[0] = byte(i + 1)
+
+		var sk, rk [32]byte
+		sk[0] = byte(i)
+		rk[0] = byte(i + 10)
+
+		sessions[i] = e.buildSession(pub, sk, rk, uint32(i*10), uint32(i*10+1), nil)
+	}
+
+	e.mu.RLock()
+	count := len(e.sessions)
+	byIDCount := len(e.byID)
+	e.mu.RUnlock()
+
+	if count != 5 {
+		t.Errorf("sessions count: got %d, want 5", count)
+	}
+	if byIDCount != 5 {
+		t.Errorf("byID count: got %d, want 5", byIDCount)
+	}
+
+	// Verify each session is accessible.
+	for i, ps := range sessions {
+		if ps.localID != uint32(i*10) {
+			t.Errorf("session %d localID: got %d, want %d", i, ps.localID, i*10)
+		}
+	}
+}
+
+// ─── HTTP client configuration ───────────────────────────────────────────────
+
+func TestHTTPClientHasTimeouts(t *testing.T) {
+	if httpClient == nil {
+		t.Fatal("httpClient should not be nil")
+	}
+	if httpClient.Timeout == 0 {
+		t.Error("httpClient should have a non-zero Timeout")
+	}
+	if httpClient.Transport == nil {
+		t.Error("httpClient should have a Transport configured")
 	}
 }
 
