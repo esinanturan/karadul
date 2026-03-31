@@ -382,3 +382,92 @@ func TestManager_Stop(t *testing.T) {
 	// A second Stop will panic if not handled, but that's acceptable behavior
 	// since double-close of a channel is a programming error
 }
+
+// TestManager_AddOrUpdate_InvalidRouteCIDR verifies that invalid CIDR strings
+// in the Routes slice are silently ignored and do not end up as entries in the
+// peer's Routes list.
+func TestManager_AddOrUpdate_InvalidRouteCIDR(t *testing.T) {
+	m := newMgrForTest(t)
+
+	var key [32]byte
+	key[0] = 0xFE
+	vip := net.ParseIP("100.64.0.50")
+
+	m.AddOrUpdate(key, "bad-route-node", "id-fe", vip, "", []string{
+		"not-a-cidr",
+		"192.168.1.0/24",
+		"also invalid",
+		"10.0.0.0/8",
+	})
+
+	p, ok := m.GetPeer(key)
+	if !ok {
+		t.Fatal("peer should exist")
+	}
+
+	p.mu.RLock()
+	routes := p.Routes
+	p.mu.RUnlock()
+
+	if len(routes) != 2 {
+		t.Fatalf("expected 2 valid routes, got %d", len(routes))
+	}
+
+	// Verify the two valid routes are present.
+	found192 := false
+	found10 := false
+	for _, r := range routes {
+		if r.String() == "192.168.1.0/24" {
+			found192 = true
+		}
+		if r.String() == "10.0.0.0/8" {
+			found10 = true
+		}
+	}
+	if !found192 {
+		t.Error("expected 192.168.1.0/24 route")
+	}
+	if !found10 {
+		t.Error("expected 10.0.0.0/8 route")
+	}
+}
+
+// TestManager_AddOrUpdate_InvalidRouteCIDRs verifies that invalid CIDR strings
+// are silently skipped on both the initial add and subsequent update paths.
+func TestManager_AddOrUpdate_InvalidRouteCIDRs(t *testing.T) {
+	m := newMgrForTest(t)
+
+	var key [32]byte
+	key[0] = 0xFD
+	vip := net.ParseIP("100.64.0.60")
+
+	// Initial add with only invalid routes.
+	m.AddOrUpdate(key, "all-bad", "id-fd", vip, "", []string{"not-a-cidr", "also-bad"})
+
+	p, ok := m.GetPeer(key)
+	if !ok {
+		t.Fatal("peer should exist")
+	}
+	p.mu.RLock()
+	n := len(p.Routes)
+	p.mu.RUnlock()
+	if n != 0 {
+		t.Fatalf("expected 0 routes for all-invalid input, got %d", n)
+	}
+
+	// Update with mix of valid and invalid routes.
+	m.AddOrUpdate(key, "all-bad", "id-fd", vip, "", []string{
+		"garbage",
+		"172.16.0.0/12",
+	})
+
+	p.mu.RLock()
+	routes := p.Routes
+	p.mu.RUnlock()
+	if len(routes) != 1 {
+		t.Fatalf("expected 1 valid route after update, got %d", len(routes))
+	}
+	if routes[0].String() != "172.16.0.0/12" {
+		t.Errorf("expected 172.16.0.0/12, got %s", routes[0])
+	}
+}

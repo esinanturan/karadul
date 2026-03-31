@@ -477,3 +477,226 @@ func TestBuildRecvPacket(t *testing.T) {
 		t.Error("packet data mismatch")
 	}
 }
+
+// TestServer_VerifyFunc_RejectsUnregistered verifies that a client with a key
+// rejected by VerifyFunc is disconnected after sending ClientInfo.
+func TestServer_VerifyFunc_RejectsUnregistered(t *testing.T) {
+	log := klog.New(nil, klog.LevelError, klog.FormatText)
+	s := NewServer(log)
+
+	var rejectedKey [32]byte
+	rejectedKey[0] = 0xB0
+
+	// VerifyFunc rejects any key whose first byte is 0xB0.
+	s.VerifyFunc = func(pubKey [32]byte) bool {
+		return pubKey[0] != 0xB0
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go http.Serve(ln, s)
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
+
+	// Send HTTP upgrade
+	fmt.Fprint(rw, "GET /derp HTTP/1.1\r\nHost: localhost\r\nUpgrade: derp\r\nConnection: Upgrade\r\n\r\n")
+	rw.Flush()
+
+	resp, err := http.ReadResponse(rw.Reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("expected 101, got %d", resp.StatusCode)
+	}
+
+	// Send ClientInfo with the rejected key.
+	WriteFrame(rw, FrameClientInfo, rejectedKey[:])
+	rw.Flush()
+
+	// The server should close the connection. Verify by attempting to read.
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 1)
+	_, err = conn.Read(buf)
+	if err == nil {
+		t.Fatal("expected connection to be closed after VerifyFunc rejection")
+	}
+
+	// Verify the client was never registered.
+	s.mu.RLock()
+	_, exists := s.clients[rejectedKey]
+	s.mu.RUnlock()
+	if exists {
+		t.Fatal("rejected key should not appear in clients map")
+	}
+}
+
+// TestServer_VerifyFunc_NilAllowsAll verifies that a server with VerifyFunc=nil
+// accepts any client connection normally.
+func TestServer_VerifyFunc_NilAllowsAll(t *testing.T) {
+	log := klog.New(nil, klog.LevelError, klog.FormatText)
+	s := NewServer(log)
+	// VerifyFunc is nil by default.
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go http.Serve(ln, s)
+
+	var pubKey [32]byte
+	pubKey[0] = 0xCC
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
+
+	// Send HTTP upgrade
+	fmt.Fprint(rw, "GET /derp HTTP/1.1\r\nHost: localhost\r\nUpgrade: derp\r\nConnection: Upgrade\r\n\r\n")
+	rw.Flush()
+
+	resp, err := http.ReadResponse(rw.Reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("expected 101, got %d", resp.StatusCode)
+	}
+
+	// Send ClientInfo.
+	WriteFrame(rw, FrameClientInfo, pubKey[:])
+	rw.Flush()
+
+	// Wait for server to register the client.
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify the client was registered.
+	s.mu.RLock()
+	_, exists := s.clients[pubKey]
+	s.mu.RUnlock()
+	if !exists {
+		t.Fatal("client should be registered when VerifyFunc is nil")
+	}
+
+	// Send a ping to confirm the connection is functional.
+	WriteFrame(rw, FramePing, nil)
+	rw.Flush()
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	frame, err := ReadFrame(rw)
+	if err != nil {
+		t.Fatalf("failed to read pong: %v", err)
+	}
+	if frame.Type != FramePong {
+		t.Errorf("expected pong, got %d", frame.Type)
+	}
+}
+
+// TestServer_VerifyFunc_RejectsUnknownKey verifies that VerifyFunc correctly
+// distinguishes between a rejected (unknown) key and an accepted (known) key.
+func TestServer_VerifyFunc_RejectsUnknownKey(t *testing.T) {
+	log := klog.New(nil, klog.LevelError, klog.FormatText)
+	s := NewServer(log)
+
+	var knownKey, unknownKey [32]byte
+	knownKey[0] = 0x01
+	unknownKey[0] = 0xFF
+
+	// VerifyFunc accepts only knownKey.
+	s.VerifyFunc = func(pubKey [32]byte) bool {
+		return pubKey == knownKey
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go http.Serve(ln, s)
+
+	// --- Subtest: rejected key ---
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
+	fmt.Fprint(rw, "GET /derp HTTP/1.1\r\nHost: localhost\r\nUpgrade: derp\r\nConnection: Upgrade\r\n\r\n")
+	rw.Flush()
+
+	resp, err := http.ReadResponse(rw.Reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("expected 101, got %d", resp.StatusCode)
+	}
+
+	WriteFrame(rw, FrameClientInfo, unknownKey[:])
+	rw.Flush()
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 1)
+	_, err = conn.Read(buf)
+	if err == nil {
+		t.Fatal("expected connection to be closed for unknown key")
+	}
+	conn.Close()
+
+	// Verify unknownKey was not registered.
+	s.mu.RLock()
+	_, exists := s.clients[unknownKey]
+	s.mu.RUnlock()
+	if exists {
+		t.Fatal("unknown key should not appear in clients map")
+	}
+
+	// --- Subtest: accepted (known) key ---
+	conn2, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn2.Close()
+
+	rw2 := bufio.NewReadWriter(bufio.NewReader(conn2), bufio.NewWriter(conn2))
+	fmt.Fprint(rw2, "GET /derp HTTP/1.1\r\nHost: localhost\r\nUpgrade: derp\r\nConnection: Upgrade\r\n\r\n")
+	rw2.Flush()
+
+	resp2, err := http.ReadResponse(rw2.Reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp2.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("expected 101, got %d", resp2.StatusCode)
+	}
+
+	WriteFrame(rw2, FrameClientInfo, knownKey[:])
+	rw2.Flush()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify knownKey was registered.
+	s.mu.RLock()
+	_, exists = s.clients[knownKey]
+	s.mu.RUnlock()
+	if !exists {
+		t.Fatal("known key should be registered in clients map")
+	}
+}

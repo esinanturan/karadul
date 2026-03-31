@@ -316,3 +316,134 @@ func TestACL_ConcurrentReadWrite(t *testing.T) {
 	}
 	<-done
 }
+
+// TestValidatePolicy_InvalidPort verifies that Validate rejects a rule with
+// a non-numeric port string.
+func TestValidatePolicy_InvalidPort(t *testing.T) {
+	policy := ACLPolicy{
+		Rules: []ACLRule{
+			{Action: "allow", Src: []string{"*"}, Dst: []string{"*"}, Ports: []string{"abc"}},
+		},
+	}
+	if err := policy.Validate(); err == nil {
+		t.Fatal("expected validation error for non-numeric port 'abc'")
+	}
+}
+
+// TestValidatePolicy_InvalidCIDRMask verifies that Validate rejects a group
+// member with an invalid CIDR mask.
+func TestValidatePolicy_InvalidCIDRMask(t *testing.T) {
+	policy := ACLPolicy{
+		Groups: map[string][]string{
+			"bad-group": {"10.0.0.0/33"},
+		},
+		Rules: []ACLRule{
+			{Action: "allow", Src: []string{"group:bad-group"}, Dst: []string{"*"}},
+		},
+	}
+	if err := policy.Validate(); err == nil {
+		t.Fatal("expected validation error for invalid CIDR mask /33")
+	}
+}
+
+// TestEngine_Allow_IPv6 verifies that IPv6 loopback addresses work in ACL rules.
+func TestEngine_Allow_IPv6(t *testing.T) {
+	policy := ACLPolicy{
+		Rules: []ACLRule{
+			{Action: "allow", Src: []string{"::1/128"}, Dst: []string{"::1/128"}},
+		},
+	}
+	e := NewEngine(policy)
+
+	src := net.ParseIP("::1")
+	dst := net.ParseIP("::1")
+	if src == nil || dst == nil {
+		t.Fatal("failed to parse IPv6 loopback")
+	}
+	if !e.Allow(src, dst, 80) {
+		t.Fatal("IPv6 loopback to IPv6 loopback should be allowed")
+	}
+
+	// IPv4 should not match the IPv6 rule.
+	if e.Allow(net.ParseIP("10.0.0.1"), net.ParseIP("10.0.0.2"), 80) {
+		t.Fatal("IPv4 should not match IPv6-only rule")
+	}
+}
+
+// TestEngine_Allow_TagReference verifies that tag: references in Src do not
+// crash the engine. Tags are not a recognized prefix in matchesAddrList, so
+// the rule should silently not match.
+func TestEngine_Allow_TagReference(t *testing.T) {
+	policy := ACLPolicy{
+		Rules: []ACLRule{
+			{Action: "allow", Src: []string{"tag:servers"}, Dst: []string{"*"}},
+		},
+	}
+	e := NewEngine(policy)
+
+	// Should not crash; tag: is not a recognized prefix, so it won't match.
+	if e.Allow(net.ParseIP("10.0.0.1"), net.ParseIP("10.0.0.2"), 80) {
+		t.Fatal("tag: reference should not match any IP")
+	}
+}
+
+func TestIsValidPort(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Valid entries.
+		{"*", true},
+		{"", true}, // empty string is valid (no port restriction)
+		{"80", true},
+		{"443", true},
+		{"0", true},
+		{"65535", true},
+		{"8080-9090", true},
+		{"0-65535", true},
+
+		// Invalid entries.
+		{"abc", false},
+		{"-1", false},     // "-1" parsed as range with empty left side
+		{"65536", false},  // exceeds max port
+		{"0-99999", false}, // hi end exceeds max port
+		{"100-abc", false}, // range with non-numeric hi
+		{"-100", false},   // range with empty left side
+		{"100-", false},   // range with empty right side
+	}
+	for _, tt := range tests {
+		got := isValidPort(tt.input)
+		if got != tt.want {
+			t.Errorf("isValidPort(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestACLPolicyValidate_InvalidPorts verifies that Validate rejects a rule with
+// an invalid port string.
+func TestACLPolicyValidate_InvalidPorts(t *testing.T) {
+	policy := ACLPolicy{
+		Rules: []ACLRule{
+			{Action: "allow", Src: []string{"*"}, Dst: []string{"*"}, Ports: []string{"abc"}},
+		},
+	}
+	if err := policy.Validate(); err == nil {
+		t.Fatal("expected validation error for port 'abc'")
+	}
+}
+
+// TestACLPolicyValidate_InvalidCIDRMask verifies that Validate rejects a group
+// member with an invalid CIDR mask.
+func TestACLPolicyValidate_InvalidCIDRMask(t *testing.T) {
+	policy := ACLPolicy{
+		Groups: map[string][]string{
+			"bad": {"10.0.0.0/33"},
+		},
+		Rules: []ACLRule{
+			{Action: "allow", Src: []string{"group:bad"}, Dst: []string{"*"}},
+		},
+	}
+	if err := policy.Validate(); err == nil {
+		t.Fatal("expected validation error for CIDR mask /33")
+	}
+}

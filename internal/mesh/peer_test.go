@@ -143,3 +143,61 @@ func TestPeer_SetGetEndpoint(t *testing.T) {
 		t.Fatal("GetEndpoint should return a copy, not the original pointer")
 	}
 }
+
+// TestPeer_TransitionSameState verifies that transitioning a peer to its
+// current state does NOT invoke the onStateChange callback.
+func TestPeer_TransitionSameState(t *testing.T) {
+	var key [32]byte
+	p := NewPeer(key, "same-state", "id-ss", net.ParseIP("100.64.0.20"))
+
+	callbackCount := 0
+	p.SetOnStateChange(func(peer *Peer, from, to PeerState) {
+		callbackCount++
+	})
+
+	// First transition: Discovered -> Direct.
+	p.Transition(PeerDirect)
+	if callbackCount != 1 {
+		t.Fatalf("expected 1 callback after first Transition, got %d", callbackCount)
+	}
+
+	// Second transition: Direct -> Direct (same state). Callback should NOT fire.
+	p.Transition(PeerDirect)
+	if callbackCount != 1 {
+		t.Fatalf("expected callback count to remain 1 after same-state transition, got %d", callbackCount)
+	}
+
+	if p.GetState() != PeerDirect {
+		t.Fatalf("expected PeerDirect, got %s", p.GetState())
+	}
+}
+
+// TestPeer_TransitionSameStateNoCallback verifies that transitioning a peer to
+// the state it is already in does NOT invoke the onStateChange callback.
+// This is a focused variant of TestPeer_TransitionSameState that also inspects
+// the (from, to) arguments passed to the callback.
+func TestPeer_TransitionSameStateNoCallback(t *testing.T) {
+	var key [32]byte
+	p := NewPeer(key, "no-cb-node", "id-nc", net.ParseIP("100.64.0.30"))
+
+	type transition struct{ from, to PeerState }
+	var seen []transition
+	p.SetOnStateChange(func(peer *Peer, from, to PeerState) {
+		seen = append(seen, transition{from, to})
+	})
+
+	// First: Discovered -> Direct. Callback MUST fire.
+	p.Transition(PeerDirect)
+	if len(seen) != 1 {
+		t.Fatalf("expected 1 callback after first Transition, got %d", len(seen))
+	}
+	if seen[0].from != PeerDiscovered || seen[0].to != PeerDirect {
+		t.Fatalf("unexpected transition: from=%s to=%s", seen[0].from, seen[0].to)
+	}
+
+	// Second: Direct -> Direct. Callback must NOT fire.
+	p.Transition(PeerDirect)
+	if len(seen) != 1 {
+		t.Fatalf("callback must not fire on same-state transition; got %d calls", len(seen))
+	}
+}
