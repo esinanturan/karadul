@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -785,6 +786,181 @@ func TestHTTPClientHasTimeouts(t *testing.T) {
 	}
 	if httpClient.Transport == nil {
 		t.Error("httpClient should have a Transport configured")
+	}
+}
+
+// ─── ACL tests ──────────────────────────────────────────────────────────────
+
+func TestApplyACL_EmptyRules(t *testing.T) {
+	e := testEngine(t)
+
+	// Engine starts with a default allow-all policy.
+	if !e.acl.Allow(net.ParseIP("100.64.0.1"), net.ParseIP("100.64.0.2"), 80) {
+		t.Fatal("default policy should allow all")
+	}
+
+	// Empty rules should not change the ACL engine.
+	e.applyACL(coordinator.ACLPolicy{Rules: nil})
+	if !e.acl.Allow(net.ParseIP("100.64.0.1"), net.ParseIP("100.64.0.2"), 80) {
+		t.Fatal("empty rules should not change allow-all policy")
+	}
+}
+
+func TestApplyACL_NonEmptyRules(t *testing.T) {
+	e := testEngine(t)
+
+	// Apply a deny-all rule for port 22 from 100.64.0.0/10.
+	e.applyACL(coordinator.ACLPolicy{
+		Version: 1,
+		Rules: []coordinator.ACLRule{
+			{
+				Action: "deny",
+				Src:    []string{"100.64.0.0/10"},
+				Dst:    []string{"*"},
+				Ports:  []string{"22"},
+			},
+			{
+				Action: "allow",
+				Src:    []string{"*"},
+				Dst:    []string{"*"},
+			},
+		},
+	})
+
+	src := net.ParseIP("100.64.0.5")
+	dst := net.ParseIP("100.64.0.10")
+
+	// SSH (port 22) should be denied.
+	if e.acl.Allow(src, dst, 22) {
+		t.Error("expected port 22 to be denied")
+	}
+
+	// HTTP (port 80) should be allowed by the catch-all allow rule.
+	if !e.acl.Allow(src, dst, 80) {
+		t.Error("expected port 80 to be allowed")
+	}
+}
+
+// ─── Peers API tests ────────────────────────────────────────────────────────
+
+func TestHandleAPIPeers(t *testing.T) {
+	e := testEngine(t)
+
+	var pub [32]byte
+	for i := range pub {
+		pub[i] = byte(i + 1)
+	}
+	e.manager.AddOrUpdate(pub, "test-peer", "n1", net.ParseIP("100.64.0.2"), "", nil)
+
+	w := httptest.NewRecorder()
+	e.handleAPIPeers(w, httptest.NewRequest(http.MethodGet, "/peers", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "test-peer") {
+		t.Errorf("response should contain peer hostname, got:\n%s", body)
+	}
+	if !strings.Contains(body, "100.64.0.2") {
+		t.Errorf("response should contain peer virtual IP, got:\n%s", body)
+	}
+	if !strings.Contains(body, "n1") {
+		t.Errorf("response should contain peer node ID, got:\n%s", body)
+	}
+}
+
+func TestHandleAPIPeers_Empty(t *testing.T) {
+	e := testEngine(t)
+
+	w := httptest.NewRecorder()
+	e.handleAPIPeers(w, httptest.NewRequest(http.MethodGet, "/peers", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var result []json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected empty array, got %d items", len(result))
+	}
+}
+
+// ─── Exit node API tests ───────────────────────────────────────────────────
+
+func TestHandleAPIExitNodeEnable_WrongMethod(t *testing.T) {
+	e := testEngine(t)
+
+	w := httptest.NewRecorder()
+	e.handleAPIExitNodeEnable(w, httptest.NewRequest(http.MethodGet, "/exit-node/enable", nil))
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandleAPIExitNodeEnable_InvalidJSON(t *testing.T) {
+	e := testEngine(t)
+
+	w := httptest.NewRecorder()
+	e.handleAPIExitNodeEnable(w, httptest.NewRequest(http.MethodPost, "/exit-node/enable",
+		strings.NewReader("{invalid json")))
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleAPIExitNodeEnable_MissingInterface(t *testing.T) {
+	e := testEngine(t)
+
+	w := httptest.NewRecorder()
+	e.handleAPIExitNodeEnable(w, httptest.NewRequest(http.MethodPost, "/exit-node/enable",
+		strings.NewReader(`{"out_interface":""}`)))
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleAPIExitNodeUse_WrongMethod(t *testing.T) {
+	e := testEngine(t)
+
+	w := httptest.NewRecorder()
+	e.handleAPIExitNodeUse(w, httptest.NewRequest(http.MethodGet, "/exit-node/use", nil))
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandleAPIExitNodeUse_PeerNotFound(t *testing.T) {
+	e := testEngine(t)
+
+	w := httptest.NewRecorder()
+	e.handleAPIExitNodeUse(w, httptest.NewRequest(http.MethodPost, "/exit-node/use",
+		strings.NewReader(`{"peer":"nonexistent"}`)))
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+// ─── pathName helper tests ─────────────────────────────────────────────────
+
+func TestPathName(t *testing.T) {
+	if got := pathName(nil); got != "relay" {
+		t.Errorf("pathName(nil) = %q, want %q", got, "relay")
+	}
+
+	addr := &net.UDPAddr{IP: net.ParseIP("1.2.3.4"), Port: 5678}
+	want := "direct:1.2.3.4:5678"
+	if got := pathName(addr); got != want {
+		t.Errorf("pathName(%v) = %q, want %q", addr, got, want)
 	}
 }
 
