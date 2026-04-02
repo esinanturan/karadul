@@ -90,18 +90,7 @@ func RemovePort(port int, protocol string) error {
 		return fmt.Errorf("pfctl list rules: %w", err)
 	}
 
-	target := fmt.Sprintf("port %d", port)
-	var kept []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.Contains(line, target) && strings.Contains(line, p) {
-			continue
-		}
-		kept = append(kept, line)
-	}
+	kept := filterRules(string(out), port, p)
 
 	// Reload remaining rules.
 	var rules string
@@ -114,6 +103,24 @@ func RemovePort(port int, protocol string) error {
 		return fmt.Errorf("pfctl remove port: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+// filterRules removes rules matching the given port and protocol from the
+// pf rules output, returning the remaining lines.
+func filterRules(pfOutput string, port int, protocol string) []string {
+	target := fmt.Sprintf("port %d", port)
+	var kept []string
+	for _, line := range strings.Split(pfOutput, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, target) && strings.Contains(line, protocol) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return kept
 }
 
 // pfctl runs a pfctl command.
