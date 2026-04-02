@@ -196,6 +196,24 @@ func isValidPublicKey(s string) bool {
 	return len(b) == 32
 }
 
+// isValidPort checks that a port string is a valid number or range (e.g. "80", "80-443").
+func isValidPort(s string) bool {
+	if s == "" {
+		return false
+	}
+	if strings.Contains(s, "-") {
+		parts := strings.SplitN(s, "-", 2)
+		lo, err1 := strconv.Atoi(parts[0])
+		hi, err2 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil || lo < 1 || hi > 65535 || lo > hi {
+			return false
+		}
+		return true
+	}
+	n, err := strconv.Atoi(s)
+	return err == nil && n >= 1 && n <= 65535
+}
+
 // sanitizeHostname returns a cleaned hostname or rejects it.
 func sanitizeHostname(s string) (string, error) {
 	if len(s) > 253 {
@@ -602,6 +620,19 @@ func (a *API) handleAdminACL(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(body, &acl); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
+		}
+		// Validate ACL rules.
+		for _, rule := range acl.Rules {
+			if rule.Action != "allow" && rule.Action != "deny" {
+				http.Error(w, "invalid action: must be 'allow' or 'deny'", http.StatusBadRequest)
+				return
+			}
+			for _, p := range rule.Ports {
+				if !isValidPort(p) {
+					http.Error(w, "invalid port: "+p, http.StatusBadRequest)
+					return
+				}
+			}
 		}
 		if err := a.store.SetACL(acl); err != nil {
 			http.Error(w, "store error", http.StatusInternalServerError)

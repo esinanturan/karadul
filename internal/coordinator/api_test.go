@@ -1414,7 +1414,7 @@ func TestAdminACL_PutSuccess(t *testing.T) {
 	policy := ACLPolicy{
 		Version: 1,
 		Rules: []ACLRule{
-			{Action: "accept", Src: []string{"*"}, Dst: []string{"*"}},
+			{Action: "allow", Src: []string{"*"}, Dst: []string{"*"}},
 		},
 	}
 	body, _ := json.Marshal(policy)

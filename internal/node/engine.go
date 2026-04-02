@@ -1148,7 +1148,7 @@ func (e *Engine) handleAPIExitNodeEnable(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		OutInterface string `json:"out_interface"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
@@ -1163,7 +1163,7 @@ func (e *Engine) handleAPIExitNodeEnable(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (e *Engine) handleAPIExitNodeUse(w http.ResponseWriter, r *http.Request) {
@@ -1175,7 +1175,7 @@ func (e *Engine) handleAPIExitNodeUse(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Peer string `json:"peer"` // hostname or virtual IP
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
@@ -1207,7 +1207,7 @@ func (e *Engine) handleAPIExitNodeUse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status": "ok",
 		"peer":   peer.Hostname,
 	})
@@ -1219,7 +1219,7 @@ func (e *Engine) handleAPIShutdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "shutting down"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "shutting down"})
 	if e.cancel != nil {
 		e.cancel()
 	}
