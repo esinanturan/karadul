@@ -1216,6 +1216,233 @@ func TestHandleAPIShutdown_NilCancel(t *testing.T) {
 	}
 }
 
+// ─── sendPing tests ───────────────────────────────────────────────────────────
+
+func TestSendPing(t *testing.T) {
+	var gotMethod, gotPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+
+		// Verify signed headers.
+		if r.Header.Get("X-Karadul-Key") == "" {
+			t.Error("missing X-Karadul-Key header")
+		}
+		if r.Header.Get("X-Karadul-Sig") == "" {
+			t.Error("missing X-Karadul-Sig header")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	e := testEngine(t)
+	e.serverURL = srv.URL
+
+	err := e.sendPing(context.Background())
+	if err != nil {
+		t.Fatalf("sendPing: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method: got %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/ping" {
+		t.Errorf("path: got %q, want /api/v1/ping", gotPath)
+	}
+}
+
+func TestSendPing_Error(t *testing.T) {
+	e := testEngine(t)
+	e.serverURL = "http://127.0.0.1:0" // invalid port
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := e.sendPing(ctx)
+	if err == nil {
+		t.Error("expected error for unreachable server")
+	}
+}
+
+// ─── onDERPRecv tests ────────────────────────────────────────────────────────
+
+func TestOnDERPRecv_EmptyPayload(t *testing.T) {
+	e := testEngine(t)
+	// Should not panic.
+	e.onDERPRecv([32]byte{}, nil)
+	e.onDERPRecv([32]byte{}, []byte{})
+}
+
+func TestOnDERPRecv_InvalidType(t *testing.T) {
+	e := testEngine(t)
+	// Unknown packet type — should be silently ignored.
+	e.onDERPRecv([32]byte{}, []byte{0xFF, 0x00, 0x00})
+}
+
+func TestOnDERPRecv_Keepalive(t *testing.T) {
+	e := testEngine(t)
+	// Keepalive type — should be silently ignored (no handler in switch).
+	e.onDERPRecv([32]byte{}, []byte{0x04})
+}
+
+// ─── tryUpgradeToDirect tests ─────────────────────────────────────────────────
+
+func TestTryUpgradeToDirect_NoRelayedSessions(t *testing.T) {
+	e := testEngine(t)
+
+	// Build a session with a direct endpoint — should NOT be selected for upgrade.
+	var pub [32]byte
+	pub[0] = 1
+	ep := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 12345}
+	ps := e.buildSession(pub, [32]byte{1}, [32]byte{2}, 1, 2, ep)
+
+	peer := mesh.NewPeer(pub, "direct-peer", "n1", net.ParseIP("100.64.0.2"))
+	peer.SetEndpoint(ep)
+	ps.peer = peer
+
+	// Should not panic and should not try to upgrade.
+	e.tryUpgradeToDirect()
+}
+
+func TestTryUpgradeToDirect_RelayedSession(t *testing.T) {
+	e := testEngine(t)
+
+	// Bind a real UDP socket so initiateHandshake doesn't panic on nil conn.
+	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	e.udp = udp
+	t.Cleanup(func() { udp.Close() })
+
+	// Build a session with nil endpoint (relayed via DERP).
+	var pub [32]byte
+	pub[0] = 2
+	ps := e.buildSession(pub, [32]byte{3}, [32]byte{4}, 10, 20, nil)
+	ps.endpoint.Store(nil) // explicitly nil = relayed
+
+	peer := mesh.NewPeer(pub, "relayed-peer", "n2", net.ParseIP("100.64.0.3"))
+	// Give the peer an endpoint that was discovered after the session was created.
+	peer.SetEndpoint(&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: udp.LocalAddr().(*net.UDPAddr).Port})
+	ps.peer = peer
+
+	// This should attempt a handshake upgrade.
+	e.tryUpgradeToDirect()
+}
+
+func TestTryUpgradeToDirect_EmptySessions(t *testing.T) {
+	e := testEngine(t)
+	// No sessions at all — should be a no-op.
+	e.tryUpgradeToDirect()
+}
+
+// ─── handleData edge cases ────────────────────────────────────────────────────
+
+func TestHandleData_UnknownReceiverIndex(t *testing.T) {
+	e := testEngine(t)
+
+	// Craft a minimal data message with an unknown receiver index.
+	// Data packet: type(1) + reserved(3) + receiverIndex(4) + counter(8) + ciphertext
+	pkt := make([]byte, 32)
+	pkt[0] = 0x03 // TypeData
+	// receiverIndex = 99999 (bytes 4-7)
+	pkt[4] = 0x9F
+	pkt[5] = 0x86
+	pkt[6] = 0x01
+	pkt[7] = 0x00
+
+	// Should silently drop (no panic).
+	e.handleData(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, pkt)
+}
+
+func TestHandleUDPPacket_InvalidType(t *testing.T) {
+	e := testEngine(t)
+
+	// Packet with unknown type byte.
+	e.handleUDPPacket(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, []byte{0xFF})
+}
+
+// ─── handleAPIExitNodeUse with peer by VIP ─────────────────────────────────────
+
+func TestHandleAPIExitNodeUse_ByVirtualIP(t *testing.T) {
+	e := testEngine(t)
+
+	// Set up mock TUN and router to avoid nil panics.
+	mtun := &mockTUN{name: "mocktun0", mtu: 1420}
+	e.tun = mtun
+	e.router = mesh.NewRouter(e.manager)
+
+	var pub [32]byte
+	for i := range pub {
+		pub[i] = byte(i + 1)
+	}
+	e.manager.AddOrUpdate(pub, "exit-peer", "n1", net.ParseIP("100.64.0.99"), "", nil)
+
+	// Use VirtualIP as the peer identifier.
+	w := httptest.NewRecorder()
+	e.handleAPIExitNodeUse(w, httptest.NewRequest(http.MethodPost, "/exit-node/use",
+		strings.NewReader(`{"peer":"100.64.0.99"}`)))
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
+// ─── Mock TUN device for exit node tests ───────────────────────────────────────
+
+type mockTUN struct {
+	name    string
+	closed  bool
+	routes  []*net.IPNet
+	mtu     int
+	addr    net.IP
+	prefix  int
+}
+
+func (m *mockTUN) Name() string                     { return m.name }
+func (m *mockTUN) Read(buf []byte) (int, error)     { return 0, nil }
+func (m *mockTUN) Write(buf []byte) (int, error)    { return 0, nil }
+func (m *mockTUN) MTU() int                         { return m.mtu }
+func (m *mockTUN) SetMTU(mtu int) error             { m.mtu = mtu; return nil }
+func (m *mockTUN) SetAddr(ip net.IP, pl int) error  { m.addr = ip; m.prefix = pl; return nil }
+func (m *mockTUN) AddRoute(dst *net.IPNet) error    { m.routes = append(m.routes, dst); return nil }
+func (m *mockTUN) Close() error                     { m.closed = true; return nil }
+
+func TestHandleAPIExitNodeUse_Success(t *testing.T) {
+	e := testEngine(t)
+
+	// Set up mock TUN device.
+	mtun := &mockTUN{name: "mocktun0", mtu: 1420}
+	e.tun = mtun
+
+	// Set up router.
+	e.router = mesh.NewRouter(e.manager)
+
+	// Add a peer that will serve as exit node.
+	var pub [32]byte
+	for i := range pub {
+		pub[i] = byte(i + 1)
+	}
+	e.manager.AddOrUpdate(pub, "exit-node", "n1", net.ParseIP("100.64.0.50"), "", nil)
+
+	w := httptest.NewRecorder()
+	e.handleAPIExitNodeUse(w, httptest.NewRequest(http.MethodPost, "/exit-node/use",
+		strings.NewReader(`{"peer":"exit-node"}`)))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Verify the route was added (default route 0.0.0.0/0).
+	if len(mtun.routes) == 0 {
+		t.Fatal("expected route to be added")
+	}
+	_, defaultNet, _ := net.ParseCIDR("0.0.0.0/0")
+	if !mtun.routes[0].IP.Equal(defaultNet.IP) {
+		t.Errorf("route IP: got %v, want %v", mtun.routes[0].IP, defaultNet.IP)
+	}
+}
+
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
 func containsStr(s, substr string) bool {
