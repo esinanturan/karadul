@@ -382,10 +382,11 @@ func (s *Store) UpdatedAt() time.Time {
 // --- Garbage collection ---
 
 const (
-	gcInterval      = 5 * time.Minute
-	gcNodeStaleAge  = 30 * time.Minute  // mark offline after 30 min inactivity
-	gcNodeExpireAge = 24 * time.Hour    // delete offline nodes after 24 h
-	gcKeyExpireAge  = 24 * time.Hour    // delete expired/used keys after 24 h
+	gcInterval        = 5 * time.Minute
+	gcNodeStaleAge    = 30 * time.Minute // mark offline after 30 min inactivity
+	gcNodeExpireAge   = 24 * time.Hour   // delete offline nodes after 24 h
+	gcEphemeralKeyAge = 1 * time.Hour    // delete used ephemeral keys after 1 h
+	gcKeyExpireAge    = 24 * time.Hour   // delete expired non-ephemeral keys after 24 h
 )
 
 // StartGC begins the background garbage-collection loop.
@@ -396,12 +397,14 @@ func (s *Store) StartGC() {
 }
 
 // StopGC stops the background GC loop and waits for it to finish.
+// Safe to call multiple times.
 func (s *Store) StopGC() {
 	if s.gcStop == nil {
 		return
 	}
 	close(s.gcStop)
 	<-s.gcDone
+	s.gcStop = nil
 }
 
 func (s *Store) gcLoop() {
@@ -461,11 +464,11 @@ func (s *Store) runGC() {
 	// Phase 3: prune expired/used auth keys.
 	keys := s.state.AuthKeys[:0]
 	for _, k := range s.state.AuthKeys {
-		if k.Ephemeral && k.Used && !k.UsedAt.IsZero() && now.Sub(k.UsedAt) > gcKeyExpireAge {
-			continue // drop used ephemeral keys
+		if k.Ephemeral && k.Used && !k.UsedAt.IsZero() && now.Sub(k.UsedAt) > gcEphemeralKeyAge {
+			continue // drop used ephemeral keys older than 1 h
 		}
-		if !k.ExpiresAt.IsZero() && now.After(k.ExpiresAt) && now.Sub(k.ExpiresAt) > gcKeyExpireAge {
-			continue // drop long-expired keys
+		if !k.Ephemeral && !k.ExpiresAt.IsZero() && now.After(k.ExpiresAt) && now.Sub(k.ExpiresAt) > gcKeyExpireAge {
+			continue // drop expired non-ephemeral keys older than 24 h
 		}
 		keys = append(keys, k)
 	}

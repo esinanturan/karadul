@@ -495,3 +495,257 @@ func TestStore_ACLOperations(t *testing.T) {
 		t.Errorf("expected 1 rule, got %d", len(acl.Rules))
 	}
 }
+
+// --- GC Tests ---
+
+// TestStore_GC_MarkStaleNodesOffline verifies that active nodes not seen for >30 min are marked offline.
+func TestStore_GC_MarkStaleNodesOffline(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	s.state.Nodes = []*Node{
+		{
+			ID: "stale-node", PublicKey: "pk1", Hostname: "stale",
+			Status: NodeStatusActive, LastSeen: now.Add(-31 * time.Minute),
+		},
+		{
+			ID: "fresh-node", PublicKey: "pk2", Hostname: "fresh",
+			Status: NodeStatusActive, LastSeen: now.Add(-5 * time.Minute),
+		},
+	}
+
+	s.runGC()
+
+	// Stale node should be offline
+	n, ok := s.GetNode("stale-node")
+	if !ok {
+		t.Fatal("stale node should still exist")
+	}
+	if n.Status != NodeStatusDisabled {
+		t.Errorf("stale node should be offline, got %q", n.Status)
+	}
+
+	// Fresh node should remain active
+	n, ok = s.GetNode("fresh-node")
+	if !ok {
+		t.Fatal("fresh node should exist")
+	}
+	if n.Status != NodeStatusActive {
+		t.Errorf("fresh node should be active, got %q", n.Status)
+	}
+}
+
+// TestStore_GC_DeleteExpiredNodes verifies that offline nodes not seen for >24h are deleted.
+func TestStore_GC_DeleteExpiredNodes(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	s.state.Nodes = []*Node{
+		{
+			ID: "expired-node", PublicKey: "pk1", Hostname: "expired",
+			Status: NodeStatusDisabled, LastSeen: now.Add(-25 * time.Hour),
+		},
+		{
+			ID: "recent-offline", PublicKey: "pk2", Hostname: "recent-offline",
+			Status: NodeStatusDisabled, LastSeen: now.Add(-2 * time.Hour),
+		},
+		{
+			ID: "still-active", PublicKey: "pk3", Hostname: "active",
+			Status: NodeStatusActive, LastSeen: now.Add(-5 * time.Minute),
+		},
+	}
+
+	s.runGC()
+
+	if _, ok := s.GetNode("expired-node"); ok {
+		t.Error("expired node should be deleted")
+	}
+	if _, ok := s.GetNode("recent-offline"); !ok {
+		t.Error("recently offline node should still exist")
+	}
+	if _, ok := s.GetNode("still-active"); !ok {
+		t.Error("active node should still exist")
+	}
+}
+
+// TestStore_GC_DeleteUsedEphemeralKeys verifies used ephemeral keys >1h old are deleted.
+func TestStore_GC_DeleteUsedEphemeralKeys(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	s.state.AuthKeys = []*AuthKey{
+		{
+			ID: "old-eph", Key: "secret1", Ephemeral: true, Used: true,
+			UsedAt: now.Add(-2 * time.Hour),
+		},
+		{
+			ID: "new-eph", Key: "secret2", Ephemeral: true, Used: true,
+			UsedAt: now.Add(-30 * time.Minute),
+		},
+		{
+			ID: "unused-eph", Key: "secret3", Ephemeral: true, Used: false,
+		},
+	}
+
+	s.runGC()
+
+	keys := s.ListAuthKeys()
+	ids := make(map[string]bool)
+	for _, k := range keys {
+		ids[k.ID] = true
+	}
+
+	if ids["old-eph"] {
+		t.Error("old used ephemeral key (>1h) should be deleted")
+	}
+	if !ids["new-eph"] {
+		t.Error("recently used ephemeral key (<1h) should be kept")
+	}
+	if !ids["unused-eph"] {
+		t.Error("unused ephemeral key should be kept")
+	}
+}
+
+// TestStore_GC_DeleteExpiredNonEphemeralKeys verifies expired non-ephemeral keys >24h are deleted.
+func TestStore_GC_DeleteExpiredNonEphemeralKeys(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	s.state.AuthKeys = []*AuthKey{
+		{
+			ID: "long-expired", Key: "secret1", Ephemeral: false,
+			ExpiresAt: now.Add(-25 * time.Hour),
+		},
+		{
+			ID: "recently-expired", Key: "secret2", Ephemeral: false,
+			ExpiresAt: now.Add(-1 * time.Hour),
+		},
+		{
+			ID: "still-valid", Key: "secret3", Ephemeral: false,
+			ExpiresAt: now.Add(24 * time.Hour),
+		},
+	}
+
+	s.runGC()
+
+	keys := s.ListAuthKeys()
+	ids := make(map[string]bool)
+	for _, k := range keys {
+		ids[k.ID] = true
+	}
+
+	if ids["long-expired"] {
+		t.Error("long-expired non-ephemeral key (>24h past expiry) should be deleted")
+	}
+	if !ids["recently-expired"] {
+		t.Error("recently expired non-ephemeral key (<24h past expiry) should be kept")
+	}
+	if !ids["still-valid"] {
+		t.Error("still-valid non-ephemeral key should be kept")
+	}
+}
+
+// TestStore_GC_PersistsState verifies GC calls saveLocked when there are changes.
+func TestStore_GC_PersistsState(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	s.state.Nodes = []*Node{
+		{
+			ID: "stale", PublicKey: "pk1", Hostname: "stale",
+			Status: NodeStatusActive, LastSeen: now.Add(-31 * time.Minute),
+		},
+	}
+
+	verBefore := s.Version()
+	s.runGC()
+
+	if s.Version() <= verBefore {
+		t.Error("version should increment after GC cleanup")
+	}
+
+	// Reload from disk and verify the change was persisted.
+	s2, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, ok := s2.GetNode("stale")
+	if !ok {
+		t.Fatal("stale node should exist after reload")
+	}
+	if n.Status != NodeStatusDisabled {
+		t.Errorf("persisted status should be offline, got %q", n.Status)
+	}
+}
+
+// TestStore_GC_StartStop verifies StartGC/StopGC lifecycle.
+func TestStore_GC_StartStop(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.StartGC()
+
+	// StopGC should not block or panic.
+	done := make(chan struct{})
+	go func() {
+		s.StopGC()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(5 * time.Second):
+		t.Fatal("StopGC blocked for too long")
+	}
+
+	// Double StopGC should be safe (nil check on gcStop).
+	s.StopGC()
+}
+
+// TestStore_GC_NoDirtySave verifies GC does not save when there is nothing to clean.
+func TestStore_GC_NoDirtySave(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	s.state.Nodes = []*Node{
+		{
+			ID: "active-node", PublicKey: "pk1", Hostname: "active",
+			Status: NodeStatusActive, LastSeen: now.Add(-1 * time.Minute),
+		},
+	}
+
+	verBefore := s.Version()
+	s.runGC()
+
+	if s.Version() != verBefore {
+		t.Error("version should not change when GC has no work to do")
+	}
+}
