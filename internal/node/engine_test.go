@@ -18,6 +18,7 @@ import (
 	"github.com/karadul/karadul/internal/config"
 	"github.com/karadul/karadul/internal/coordinator"
 	"github.com/karadul/karadul/internal/crypto"
+	"github.com/karadul/karadul/internal/dns"
 	klog "github.com/karadul/karadul/internal/log"
 	"github.com/karadul/karadul/internal/mesh"
 	"github.com/karadul/karadul/internal/protocol"
@@ -3251,6 +3252,862 @@ func TestHandleHandshakeInit_ViaDERP_WithPeer(t *testing.T) {
 	e.mu.RUnlock()
 	if sessCount != 1 {
 		t.Errorf("expected 1 session after handshake init via DERP, got %d", sessCount)
+	}
+}
+
+// ─── Additional coverage tests ────────────────────────────────────────────────
+
+// TestHandleHandshakeInit_InvalidPacket verifies that handleHandshakeInit drops
+// packets that cannot be unmarshaled.
+func TestHandleHandshakeInit_InvalidPacket(t *testing.T) {
+	e := testEngine(t)
+
+	// Too-short packet for handshake init.
+	e.handleHandshakeInit(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, []byte{0x01, 0x00})
+
+	// No session should have been created.
+	e.mu.RLock()
+	sessCount := len(e.sessions)
+	e.mu.RUnlock()
+	if sessCount != 0 {
+		t.Errorf("expected 0 sessions after invalid handshake init, got %d", sessCount)
+	}
+}
+
+// TestHandleHandshakeInit_GarbagePayload verifies that handleHandshakeInit drops
+// packets where the Noise read fails (garbage data in the init fields).
+func TestHandleHandshakeInit_GarbagePayload(t *testing.T) {
+	e := testEngine(t)
+
+	// Create a properly-sized but invalid handshake init (garbage crypto data).
+	initMsg := &protocol.MsgHandshakeInit{SenderIndex: 999}
+	// Fill crypto fields with random-looking data that will fail Noise read.
+	for i := range initMsg.Ephemeral {
+		initMsg.Ephemeral[i] = 0xFF
+	}
+	for i := range initMsg.EncStatic {
+		initMsg.EncStatic[i] = 0xAA
+	}
+	for i := range initMsg.EncPayload {
+		initMsg.EncPayload[i] = 0x55
+	}
+	wire := initMsg.MarshalBinary()
+
+	e.handleHandshakeInit(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, wire)
+
+	// No session should have been created.
+	e.mu.RLock()
+	sessCount := len(e.sessions)
+	e.mu.RUnlock()
+	if sessCount != 0 {
+		t.Errorf("expected 0 sessions after garbage handshake init, got %d", sessCount)
+	}
+}
+
+// TestHandleHandshakeResp_InvalidPacket verifies that handleHandshakeResp drops
+// packets that cannot be unmarshaled.
+func TestHandleHandshakeResp_InvalidPacket(t *testing.T) {
+	e := testEngine(t)
+
+	// Too-short packet for handshake resp.
+	e.handleHandshakeResp(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, []byte{0x02})
+
+	// No session should have been created.
+	e.mu.RLock()
+	sessCount := len(e.sessions)
+	e.mu.RUnlock()
+	if sessCount != 0 {
+		t.Errorf("expected 0 sessions after invalid handshake resp, got %d", sessCount)
+	}
+}
+
+// TestHandleHandshakeResp_BadNoiseMsg2 verifies that handleHandshakeResp drops
+// the response when the Noise ReadMessage2 fails (wrong key material).
+func TestHandleHandshakeResp_BadNoiseMsg2(t *testing.T) {
+	kpAlice, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	kpBob, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := testEngine(t)
+	e.kp = kpBob
+
+	localID := e.nextID()
+	alicePeer := mesh.NewPeer(kpAlice.Public, "alice-bad-msg2", "n-a", net.ParseIP("100.64.0.20"))
+
+	// Store a pending handshake with a real initiator state.
+	hsAlice, err := crypto.InitiatorHandshake(kpAlice, kpBob.Public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = hsAlice.WriteMessage1()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e.mu.Lock()
+	e.pending[localID] = &pendingHandshake{
+		peer:    alicePeer,
+		hs:      hsAlice,
+		localID: localID,
+		sentAt:  time.Now(),
+	}
+	e.mu.Unlock()
+
+	// Send random garbage as msg2 — Noise decryption will fail.
+	fakeMsg2 := make([]byte, 48) // 32 ephemeral + 16 enc payload
+	_, _ = rand.Read(fakeMsg2)
+
+	respMsg := &protocol.MsgHandshakeResp{
+		SenderIndex:   12345,
+		ReceiverIndex: localID,
+	}
+	copy(respMsg.Ephemeral[:], fakeMsg2[:32])
+	copy(respMsg.EncPayload[:], fakeMsg2[32:48])
+	respWire := respMsg.MarshalBinary()
+
+	e.handleHandshakeResp(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, respWire)
+
+	// Session should NOT have been created because Noise msg2 decrypt should fail.
+	e.mu.RLock()
+	sessCount := len(e.sessions)
+	pendingCount := len(e.pending)
+	e.mu.RUnlock()
+	if sessCount != 0 {
+		t.Errorf("expected 0 sessions after bad msg2, got %d", sessCount)
+	}
+	// Pending should have been removed even though msg2 failed.
+	if pendingCount != 0 {
+		t.Errorf("expected 0 pending after bad msg2, got %d", pendingCount)
+	}
+}
+
+// TestHandleData_DecryptFailure verifies that handleData drops a packet when
+// decryption fails (wrong key / corrupted ciphertext).
+func TestHandleData_DecryptFailure(t *testing.T) {
+	e := testEngine(t)
+
+	mtun := &mockTUN{name: "mocktun0", mtu: 1420}
+	e.tun = mtun
+
+	var sendKey, recvKey [32]byte
+	for i := range sendKey {
+		sendKey[i] = byte(i + 1)
+		recvKey[i] = byte(i + 1)
+	}
+
+	var remotePub crypto.Key
+	for i := range remotePub {
+		remotePub[i] = byte(i + 20)
+	}
+
+	localID := uint32(510)
+	e.buildSession(remotePub, sendKey, recvKey, localID, 610, nil)
+
+	// Build a data message with garbage ciphertext.
+	wire := (&protocol.MsgData{
+		ReceiverIndex: localID,
+		Counter:       0,
+		Ciphertext:    []byte("garbage data that is not valid ciphertext"),
+	}).MarshalBinary()
+
+	// Precondition: metrics should be zero.
+	if e.metricPacketsRx.Load() != 0 {
+		t.Fatalf("precondition: packetsRx should be 0, got %d", e.metricPacketsRx.Load())
+	}
+
+	e.handleData(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, wire)
+
+	// Metrics should NOT have been incremented (decrypt failure).
+	if e.metricPacketsRx.Load() != 0 {
+		t.Errorf("packetsRx: got %d, want 0 (decrypt failure should drop packet)", e.metricPacketsRx.Load())
+	}
+}
+
+// TestHandleData_PeerEndpointUpgrade verifies that handleData upgrades a peer's
+// endpoint from nil (DERP) to direct when a direct packet arrives.
+func TestHandleData_PeerEndpointUpgrade(t *testing.T) {
+	e := testEngine(t)
+
+	mtun := &mockTUN{name: "mocktun0", mtu: 1420}
+	e.tun = mtun
+
+	var key [32]byte
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+
+	var remotePub crypto.Key
+	for i := range remotePub {
+		remotePub[i] = byte(i + 20)
+	}
+
+	localID := uint32(520)
+	ps := e.buildSession(remotePub, key, key, localID, 620, nil)
+	ps.endpoint.Store(nil) // session is relayed, no direct endpoint
+
+	peer := mesh.NewPeer(remotePub, "upgrade-peer", "n1", net.ParseIP("100.64.0.30"))
+	ps.peer = peer
+
+	// Build a minimal IPv4 packet.
+	pkt := make([]byte, 24)
+	pkt[0] = 0x45
+	pkt[9] = 6
+	pkt[12] = 100; pkt[13] = 64; pkt[14] = 0; pkt[15] = 1
+	pkt[16] = 100; pkt[17] = 64; pkt[18] = 0; pkt[19] = 2
+	pkt[22] = 0
+	pkt[23] = 80
+
+	counter, ct, err := ps.session.Encrypt(pkt)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	wire := (&protocol.MsgData{
+		ReceiverIndex: localID,
+		Counter:       counter,
+		Ciphertext:    ct,
+	}).MarshalBinary()
+
+	directAddr := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}
+	e.handleData(directAddr, wire)
+
+	// Verify the peer's endpoint was upgraded to direct.
+	if ep := peer.GetEndpoint(); ep == nil {
+		t.Error("peer endpoint should be set after direct data packet")
+	}
+	if ep := ps.endpoint.Load(); ep == nil {
+		t.Error("session endpoint should be set after direct data packet")
+	}
+}
+
+// TestHandleData_TunWriteError verifies that handleData handles a TUN write
+// error without panicking.
+func TestHandleData_TunWriteError(t *testing.T) {
+	e := testEngine(t)
+
+	e.tun = &errorWriteMockTUN{}
+
+	var key [32]byte
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+
+	var remotePub crypto.Key
+	for i := range remotePub {
+		remotePub[i] = byte(i + 20)
+	}
+
+	localID := uint32(530)
+	ps := e.buildSession(remotePub, key, key, localID, 630, nil)
+	peer := mesh.NewPeer(remotePub, "tun-err-peer", "n1", net.ParseIP("100.64.0.30"))
+	ps.peer = peer
+
+	pkt := make([]byte, 24)
+	pkt[0] = 0x45
+	pkt[9] = 6
+	pkt[12] = 100; pkt[13] = 64; pkt[14] = 0; pkt[15] = 1
+	pkt[16] = 100; pkt[17] = 64; pkt[18] = 0; pkt[19] = 2
+	pkt[22] = 0
+	pkt[23] = 80
+
+	counter, ct, err := ps.session.Encrypt(pkt)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	wire := (&protocol.MsgData{
+		ReceiverIndex: localID,
+		Counter:       counter,
+		Ciphertext:    ct,
+	}).MarshalBinary()
+
+	// Should not panic.
+	e.handleData(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, wire)
+
+	// Metrics should still have been incremented even though TUN write failed.
+	if e.metricPacketsRx.Load() != 1 {
+		t.Errorf("packetsRx: got %d, want 1 (metrics increment before TUN write)", e.metricPacketsRx.Load())
+	}
+}
+
+// errorWriteMockTUN is a mock TUN whose Write always returns an error.
+type errorWriteMockTUN struct{}
+
+func (m *errorWriteMockTUN) Name() string                     { return "err-write-mock" }
+func (m *errorWriteMockTUN) Read(buf []byte) (int, error)     { return 0, fmt.Errorf("not implemented") }
+func (m *errorWriteMockTUN) Write(buf []byte) (int, error)    { return 0, fmt.Errorf("tun write error") }
+func (m *errorWriteMockTUN) MTU() int                         { return 1420 }
+func (m *errorWriteMockTUN) SetMTU(mtu int) error             { return nil }
+func (m *errorWriteMockTUN) SetAddr(ip net.IP, pl int) error  { return nil }
+func (m *errorWriteMockTUN) AddRoute(dst *net.IPNet) error    { return nil }
+func (m *errorWriteMockTUN) Close() error                     { return nil }
+
+// TestInitiateHandshake_DuplicatePending verifies that initiateHandshake is a
+// no-op when there is already a pending handshake for the same peer.
+func TestInitiateHandshake_DuplicatePending(t *testing.T) {
+	e := testEngine(t)
+
+	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	e.udp = udp
+	t.Cleanup(func() { udp.Close() })
+
+	var pubKey [32]byte
+	for i := range pubKey {
+		pubKey[i] = byte(i + 42)
+	}
+	peer := mesh.NewPeer(pubKey, "dup-pending", "n1", net.ParseIP("100.64.0.20"))
+	peer.SetEndpoint(&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: udp.LocalAddr().(*net.UDPAddr).Port})
+
+	// First call should create a pending handshake.
+	err = e.initiateHandshake(peer)
+	if err != nil {
+		t.Fatalf("first initiateHandshake: %v", err)
+	}
+
+	e.mu.RLock()
+	pendingBefore := len(e.pending)
+	e.mu.RUnlock()
+	if pendingBefore != 1 {
+		t.Fatalf("expected 1 pending after first call, got %d", pendingBefore)
+	}
+
+	// Second call should be a no-op (duplicate pending).
+	err = e.initiateHandshake(peer)
+	if err != nil {
+		t.Fatalf("duplicate initiateHandshake: %v", err)
+	}
+
+	e.mu.RLock()
+	pendingAfter := len(e.pending)
+	e.mu.RUnlock()
+	if pendingAfter != 1 {
+		t.Errorf("expected 1 pending after duplicate call, got %d", pendingAfter)
+	}
+}
+
+// TestSendToPeer_NoSession verifies that sendToPeer triggers a connectPeer
+// goroutine when no session exists for the peer.
+func TestSendToPeer_NoSession(t *testing.T) {
+	e := testEngine(t)
+
+	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	e.udp = udp
+	t.Cleanup(func() { udp.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	e.ctx = ctx
+	t.Cleanup(cancel)
+
+	var pubKey [32]byte
+	for i := range pubKey {
+		pubKey[i] = byte(i + 77)
+	}
+	peer := mesh.NewPeer(pubKey, "no-session-peer", "n1", net.ParseIP("100.64.0.77"))
+
+	pkt := make([]byte, 24)
+	pkt[0] = 0x45
+
+	err = e.sendToPeer(peer, pkt)
+	if err != nil {
+		t.Errorf("sendToPeer with no session should return nil, got: %v", err)
+	}
+}
+
+// TestSendToPeer_ViaUDP verifies that sendToPeer sends via UDP when an
+// endpoint is available.
+func TestSendToPeer_ViaUDP(t *testing.T) {
+	e := testEngine(t)
+
+	// Set up a UDP listener as the "peer" endpoint.
+	peerUDP, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	t.Cleanup(func() { peerUDP.Close() })
+
+	engineUDP, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	e.udp = engineUDP
+	t.Cleanup(func() { engineUDP.Close() })
+
+	var pubKey [32]byte
+	for i := range pubKey {
+		pubKey[i] = byte(i + 88)
+	}
+	peer := mesh.NewPeer(pubKey, "udp-peer", "n1", net.ParseIP("100.64.0.88"))
+
+	peerEP := peerUDP.LocalAddr().(*net.UDPAddr)
+	var sendKey, recvKey [32]byte
+	for i := range sendKey {
+		sendKey[i] = byte(i + 1)
+		recvKey[i] = byte(i + 2)
+	}
+	ps := e.buildSession(pubKey, sendKey, recvKey, 3000, 3001, peerEP)
+	ps.peer = peer
+
+	pkt := make([]byte, 24)
+	pkt[0] = 0x45
+	pkt[9] = 6
+	pkt[12] = 100; pkt[13] = 64; pkt[14] = 0; pkt[15] = 1
+	pkt[16] = 100; pkt[17] = 64; pkt[18] = 0; pkt[19] = 2
+
+	err = e.sendToPeer(peer, pkt)
+	if err != nil {
+		t.Fatalf("sendToPeer via UDP: %v", err)
+	}
+
+	if e.metricPacketsTx.Load() != 1 {
+		t.Errorf("packetsTx: got %d, want 1", e.metricPacketsTx.Load())
+	}
+
+	// Verify the peer actually received the packet.
+	peerUDP.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1500)
+	n, _, err := peerUDP.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatalf("peer did not receive packet: %v", err)
+	}
+	if n == 0 {
+		t.Error("expected non-zero bytes received by peer")
+	}
+}
+
+// TestSendToPeer_PeerEndpointFallback verifies that sendToPeer uses the peer's
+// endpoint as fallback when the session endpoint is nil.
+func TestSendToPeer_PeerEndpointFallback(t *testing.T) {
+	e := testEngine(t)
+
+	peerUDP, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	t.Cleanup(func() { peerUDP.Close() })
+
+	engineUDP, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	e.udp = engineUDP
+	t.Cleanup(func() { engineUDP.Close() })
+
+	var pubKey [32]byte
+	for i := range pubKey {
+		pubKey[i] = byte(i + 99)
+	}
+	peer := mesh.NewPeer(pubKey, "fallback-peer", "n1", net.ParseIP("100.64.0.99"))
+	peerEP := peerUDP.LocalAddr().(*net.UDPAddr)
+	peer.SetEndpoint(peerEP)
+
+	var sendKey, recvKey [32]byte
+	for i := range sendKey {
+		sendKey[i] = byte(i + 1)
+		recvKey[i] = byte(i + 2)
+	}
+	// Session with nil endpoint — should fall back to peer.GetEndpoint().
+	ps := e.buildSession(pubKey, sendKey, recvKey, 4000, 4001, nil)
+	ps.peer = peer
+
+	pkt := make([]byte, 24)
+	pkt[0] = 0x45
+
+	err = e.sendToPeer(peer, pkt)
+	if err != nil {
+		t.Fatalf("sendToPeer with peer endpoint fallback: %v", err)
+	}
+
+	if e.metricPacketsTx.Load() != 1 {
+		t.Errorf("packetsTx: got %d, want 1", e.metricPacketsTx.Load())
+	}
+}
+
+// TestTunReadLoop_NormalPacket verifies that tunReadLoop processes a valid
+// packet through routing and sendToPeer.
+func TestTunReadLoop_NormalPacket(t *testing.T) {
+	e := testEngine(t)
+
+	engineUDP, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	e.udp = engineUDP
+	t.Cleanup(func() { engineUDP.Close() })
+
+	// Build a valid IPv4 packet.
+	pkt := make([]byte, 24)
+	pkt[0] = 0x45 // IPv4, IHL=5
+	pkt[9] = 6    // TCP
+	pkt[12] = 100; pkt[13] = 64; pkt[14] = 0; pkt[15] = 1 // src
+	pkt[16] = 100; pkt[17] = 64; pkt[18] = 0; pkt[19] = 2 // dst
+	pkt[22] = 0
+	pkt[23] = 80
+
+	mockTUNDev := &tunMockWithPacket{packet: pkt, ch: make(chan struct{})}
+	e.tun = mockTUNDev
+
+	// Set up router and manager.
+	e.router = mesh.NewRouter(e.manager)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	e.ctx = ctx
+	t.Cleanup(cancel)
+
+	done := make(chan struct{})
+	go func() {
+		e.tunReadLoop()
+		close(done)
+	}()
+
+	// Give it time to process the packet.
+	time.Sleep(300 * time.Millisecond)
+
+	// Close to stop the loop.
+	close(e.stopCh)
+	mockTUNDev.Close()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tunReadLoop did not exit")
+	}
+}
+
+// TestTunReadLoop_MalformedPacket verifies that tunReadLoop handles packets
+// that cannot be parsed by PacketSrcDst without crashing.
+func TestTunReadLoop_MalformedPacket(t *testing.T) {
+	e := testEngine(t)
+
+	// A packet that is too short to parse src/dst.
+	pkt := make([]byte, 4)
+	pkt[0] = 0x45
+
+	mockTUNDev := &tunMockWithPacket{packet: pkt, ch: make(chan struct{})}
+	e.tun = mockTUNDev
+	e.router = mesh.NewRouter(e.manager)
+
+	done := make(chan struct{})
+	go func() {
+		e.tunReadLoop()
+		close(done)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	close(e.stopCh)
+	mockTUNDev.Close()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tunReadLoop did not exit after malformed packet")
+	}
+}
+
+// TestRegister_DecodeError verifies that register handles a non-JSON 200
+// response body gracefully.
+func TestRegister_DecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("not json at all"))
+	}))
+	defer srv.Close()
+
+	e := testEngine(t)
+	e.serverURL = srv.URL
+
+	err := e.register(context.Background())
+	if err == nil {
+		t.Fatal("expected error for non-JSON response body")
+	}
+	if !containsStr(err.Error(), "decode") {
+		t.Errorf("error should mention decode, got: %v", err)
+	}
+}
+
+// TestRegister_HTTPError verifies that register handles HTTP request creation
+// errors (e.g. cancelled context).
+func TestRegister_HTTPError(t *testing.T) {
+	e := testEngine(t)
+	e.serverURL = "http://127.0.0.1:1" // unreachable port
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := e.register(ctx)
+	if err == nil {
+		t.Error("expected error for unreachable server")
+	}
+}
+
+// TestReportEndpoint_RequestError verifies that reportEndpoint handles HTTP
+// request creation errors.
+func TestReportEndpoint_RequestError(t *testing.T) {
+	e := testEngine(t)
+	e.serverURL = "http://127.0.0.1:1" // unreachable port
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := e.reportEndpoint(ctx, "1.2.3.4:1234")
+	if err == nil {
+		t.Error("expected error for unreachable server")
+	}
+}
+
+// TestSendPing_RequestError verifies that sendPing handles HTTP request errors.
+func TestSendPing_RequestError(t *testing.T) {
+	e := testEngine(t)
+	e.serverURL = "http://127.0.0.1:1"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := e.sendPing(ctx)
+	if err == nil {
+		t.Error("expected error for unreachable server")
+	}
+}
+
+// TestHandleUDPPacket_Keepalive verifies that handleUDPPacket handles a
+// keepalive packet type without panicking.
+func TestHandleUDPPacket_Keepalive(t *testing.T) {
+	e := testEngine(t)
+
+	e.handleUDPPacket(&net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 5000}, []byte{0x04})
+}
+
+// TestOnDERPRecv_HandshakeInitViaDERP verifies that onDERPRecv dispatches
+// a handshake init type to handleHandshakeInit with nil addr.
+func TestOnDERPRecv_HandshakeInitViaDERP(t *testing.T) {
+	e := testEngine(t)
+
+	// Craft a packet with handshake init type byte but garbage data.
+	// It will fail to unmarshal but should not panic.
+	e.onDERPRecv([32]byte{}, []byte{protocol.TypeHandshakeInit, 0x00, 0x00, 0x00})
+}
+
+// TestOnDERPRecv_DataViaDERP verifies that onDERPRecv dispatches a data
+// type to handleData with nil addr.
+func TestOnDERPRecv_DataViaDERP(t *testing.T) {
+	e := testEngine(t)
+	e.tun = &mockTUN{name: "mocktun0", mtu: 1420}
+
+	// Craft a data packet with unknown receiver index — should be silently dropped.
+	pkt := make([]byte, 32)
+	pkt[0] = protocol.TypeData
+	pkt[4] = 0xFF // unknown receiver index
+
+	e.onDERPRecv([32]byte{}, pkt)
+}
+
+// TestOnDERPRecv_HandshakeRespViaDERP verifies that onDERPRecv dispatches
+// a handshake resp type to handleHandshakeResp with nil addr.
+func TestOnDERPRecv_HandshakeRespViaDERP(t *testing.T) {
+	e := testEngine(t)
+
+	// Craft a packet with handshake resp type byte but too short.
+	e.onDERPRecv([32]byte{}, []byte{protocol.TypeHandshakeResp, 0x00})
+}
+
+// TestShutdown_NilTUN verifies that shutdown handles nil TUN gracefully.
+func TestShutdown_NilTUN(t *testing.T) {
+	e := testEngine(t)
+	// tun is nil by default on fresh engine.
+	err := e.shutdown()
+	if err != nil {
+		t.Fatalf("shutdown with nil TUN: %v", err)
+	}
+}
+
+// TestShutdown_NilUDP verifies that shutdown handles nil UDP gracefully.
+func TestShutdown_NilUDP(t *testing.T) {
+	e := testEngine(t)
+	e.tun = &mockTUN{name: "mocktun0", mtu: 1420}
+	// udp is nil by default.
+	err := e.shutdown()
+	if err != nil {
+		t.Fatalf("shutdown with nil UDP: %v", err)
+	}
+}
+
+// TestShutdown_WithResolver verifies that shutdown closes the DNS resolver.
+func TestShutdown_WithResolver(t *testing.T) {
+	e := testEngine(t)
+	e.tun = &mockTUN{name: "mocktun0", mtu: 1420}
+	e.resolver = dns.NewResolver("127.0.0.1:5353", "1.1.1.1:53", e.magic, e.log)
+
+	err := e.shutdown()
+	if err != nil {
+		t.Fatalf("shutdown with resolver: %v", err)
+	}
+}
+
+// TestConnectPeer_NoEndpointNoDERP verifies that connectPeer returns nil
+// (with a warning log) when the peer has no endpoint and no DERP client.
+func TestConnectPeer_NoEndpointNoDERP(t *testing.T) {
+	e := testEngine(t)
+
+	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	e.udp = udp
+	t.Cleanup(func() { udp.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	e.ctx = ctx
+	t.Cleanup(cancel)
+
+	var pubKey [32]byte
+	for i := range pubKey {
+		pubKey[i] = byte(i + 200)
+	}
+	peer := mesh.NewPeer(pubKey, "no-ep-no-derp", "n1", net.ParseIP("100.64.0.40"))
+
+	err = e.connectPeer(peer)
+	if err != nil {
+		t.Errorf("expected nil error for no-endpoint no-DERP, got: %v", err)
+	}
+}
+
+// TestConnectPeer_HolePunchFallback verifies that connectPeer attempts hole
+// punch when direct handshake fails but an endpoint is known. Since we can't
+// do real hole punching in a test, we verify it doesn't panic.
+func TestConnectPeer_HolePunchFallback(t *testing.T) {
+	e := testEngine(t)
+
+	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	e.udp = udp
+	t.Cleanup(func() { udp.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	e.ctx = ctx
+	t.Cleanup(cancel)
+
+	var pubKey [32]byte
+	for i := range pubKey {
+		pubKey[i] = byte(i + 150)
+	}
+	peer := mesh.NewPeer(pubKey, "holepunch-peer", "n1", net.ParseIP("100.64.0.50"))
+
+	// Set an endpoint pointing at our own UDP socket so hole punch can be attempted.
+	peer.SetEndpoint(&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: udp.LocalAddr().(*net.UDPAddr).Port})
+
+	// connectPeer will try direct handshake, fail (no listener), try hole punch, then DERP fallback.
+	err = e.connectPeer(peer)
+	// It should return nil because DERP fallback also has no client, so it logs and returns nil.
+	if err != nil {
+		t.Logf("connectPeer result (expected nil or error): %v", err)
+	}
+}
+
+// TestEndpointRefreshLoop_ContextCancel verifies that endpointRefreshLoop
+// exits when context is cancelled.
+func TestEndpointRefreshLoop_ContextCancel(t *testing.T) {
+	e := testEngine(t)
+
+	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Skipf("UDP listen: %v", err)
+	}
+	e.udp = udp
+	t.Cleanup(func() { udp.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		e.endpointRefreshLoop(ctx)
+		close(done)
+	}()
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("endpointRefreshLoop did not exit after context cancellation")
+	}
+}
+
+// TestLocalStatus_NilVirtualIP verifies that LocalStatus handles nil virtualIP.
+func TestLocalStatus_NilVirtualIP(t *testing.T) {
+	e := testEngine(t)
+	e.nodeID = "nil-vip"
+
+	// virtualIP is nil — String() on nil net.IP returns "<nil>".
+	status := e.LocalStatus()
+	if status == nil {
+		t.Error("expected non-nil status")
+	}
+}
+
+// TestHandleAPIShutdown_WrongMethod verifies the shutdown endpoint rejects GET.
+// This test already exists above; adding coverage for POST success with nil cancel.
+func TestHandleAPIShutdown_PostWithNilCancel(t *testing.T) {
+	e := testEngine(t)
+	e.ctx = context.Background()
+	// cancel is nil
+
+	w := httptest.NewRecorder()
+	e.handleAPIShutdown(w, httptest.NewRequest(http.MethodPost, "/shutdown", nil))
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+// TestSessionRotate verifies that Session.Rotate replaces keys and resets state.
+func TestSessionRotate(t *testing.T) {
+	var key1 [32]byte
+	for i := range key1 {
+		key1[i] = byte(i + 1)
+	}
+	s := NewSession(key1, key1, nil)
+
+	// Encrypt a few packets to advance the counter.
+	c1, _, _ := s.Encrypt([]byte("a"))
+	c2, _, _ := s.Encrypt([]byte("b"))
+	if c1 >= c2 {
+		t.Errorf("counters should be increasing: c1=%d, c2=%d", c1, c2)
+	}
+
+	// Rotate with new keys.
+	var newSend, newRecv [32]byte
+	for i := range newSend {
+		newSend[i] = byte(i + 100)
+		newRecv[i] = byte(i + 200)
+	}
+	s.Rotate(newSend, newRecv)
+
+	// Counter should be reset.
+	c3, _, _ := s.Encrypt([]byte("c"))
+	if c3 != 0 {
+		t.Errorf("counter after rotate: got %d, want 0", c3)
+	}
+
+	// Session should no longer be expired.
+	if s.IsExpired() {
+		t.Error("session should not be expired after rotate")
+	}
+	if s.NeedsRekey() {
+		t.Error("session should not need rekey after rotate")
 	}
 }
 
