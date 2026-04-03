@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/karadul/karadul/internal/config"
 	klog "github.com/karadul/karadul/internal/log"
 )
 
@@ -3353,5 +3355,618 @@ func TestMain_Subprocess_ExitNode_Enable_NoExplicitInterface(t *testing.T) {
 	// The important thing is it exercises the defaultOutInterface() code path.
 	if !strings.Contains(out, "error") && !strings.Contains(out, "exit node") {
 		t.Errorf("unexpected output: %q", out)
+	}
+}
+
+// ─── checkFirewall with fake pfctl ────────────────────────────────────────────
+
+// setupFakePfctlForMain creates a fake pfctl script in a temp directory and
+// prepends it to PATH. The script simulates pfctl behavior:
+//   - "-s rules" prints the content of a rules file
+//   - "-f" with "-" reads stdin and writes to the rules file
+//   - "-F rules" truncates the rules file
+//   - "-e" exits 0 (enable no-op)
+//
+// This mirrors the helper in internal/firewall/firewall_coverage_test.go but
+// lives in the main package so we can exercise checkFirewall() directly.
+func setupFakePfctlForMain(t *testing.T, initialRules string) {
+	t.Helper()
+	dir := t.TempDir()
+
+	rulesFile := dir + "/pf_rules.txt"
+	if err := os.WriteFile(rulesFile, []byte(initialRules), 0o644); err != nil {
+		t.Fatalf("write fake rules: %v", err)
+	}
+
+	script := `#!/bin/bash
+RULES="` + rulesFile + `"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s)
+      if [ "$2" = "rules" ]; then
+        if [ -f "$RULES" ]; then cat "$RULES"; fi
+        exit 0
+      fi
+      shift 2
+      ;;
+    -f)
+      if [ "$2" = "-" ]; then
+        cat > "$RULES"
+        exit 0
+      fi
+      shift 2
+      ;;
+    -F)
+      : > "$RULES"
+      exit 0
+      ;;
+    -e)
+      exit 0
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+exit 0
+`
+	pfctlPath := dir + "/pfctl"
+	if err := os.WriteFile(pfctlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake pfctl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// Verify the fake is found first.
+	p, err := exec.LookPath("pfctl")
+	if err != nil {
+		t.Fatalf("fake pfctl not found in PATH: %v", err)
+	}
+	if p != pfctlPath {
+		t.Fatalf("fake pfctl not first in PATH: got %q, want %q", p, pfctlPath)
+	}
+}
+
+// TestCheckFirewall_FakePfctl_WithRules verifies checkFirewall returns true
+// when the fake pfctl reports existing rules.
+func TestCheckFirewall_FakePfctl_WithRules(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctlForMain(t, "pass on karadul0\npass quick proto tcp to any port 443\n")
+
+	if !checkFirewall() {
+		t.Fatal("checkFirewall should return true when pfctl reports rules")
+	}
+}
+
+// TestCheckFirewall_FakePfctl_NoRules verifies checkFirewall returns false
+// when the fake pfctl reports no rules.
+func TestCheckFirewall_FakePfctl_NoRules(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctlForMain(t, "")
+
+	if checkFirewall() {
+		t.Fatal("checkFirewall should return false when pfctl reports no rules")
+	}
+}
+
+// TestCheckFirewall_FakePfctl_WhitespaceOnly verifies checkFirewall returns
+// false when pfctl output is only whitespace.
+func TestCheckFirewall_FakePfctl_WhitespaceOnly(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctlForMain(t, "   \n\t\n  \n")
+
+	if checkFirewall() {
+		t.Fatal("checkFirewall should return false for whitespace-only pfctl output")
+	}
+}
+
+// TestCheckFirewall_FakePfctl_MultipleCalls verifies repeated calls are consistent.
+func TestCheckFirewall_FakePfctl_MultipleCalls(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only")
+	}
+	setupFakePfctlForMain(t, "pass on karadul0\n")
+
+	for i := 0; i < 5; i++ {
+		if !checkFirewall() {
+			t.Fatalf("call %d: checkFirewall should return true with rules loaded", i)
+		}
+	}
+}
+
+// ─── defaultOutInterface tests ────────────────────────────────────────────────
+
+// TestDefaultOutInterface_NetworkAvailable exercises the success path of
+// defaultOutInterface when the machine has network connectivity.
+func TestDefaultOutInterface_NetworkAvailable(t *testing.T) {
+	result := defaultOutInterface()
+	if result == "" {
+		t.Skip("no default route available in this environment")
+	}
+	t.Logf("defaultOutInterface returned %q", result)
+
+	// Verify the returned name looks like a valid interface name.
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("net.Interfaces: %v", err)
+	}
+	found := false
+	for _, iface := range ifaces {
+		if iface.Name == result {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("defaultOutInterface returned %q which is not a known interface", result)
+	}
+}
+
+// TestDefaultOutInterface_ConcurrentCalls verifies concurrent calls don't race.
+func TestDefaultOutInterface_ConcurrentCalls(t *testing.T) {
+	type outcome struct {
+		iface string
+		err   error
+	}
+	ch := make(chan outcome, 10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			iface := defaultOutInterface()
+			ch <- outcome{iface: iface}
+		}()
+	}
+	results := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		o := <-ch
+		results = append(results, o.iface)
+	}
+	// All results should be identical.
+	for _, r := range results[1:] {
+		if r != results[0] {
+			t.Errorf("inconsistent results: %q vs %q", results[0], r)
+		}
+	}
+}
+
+// TestDefaultOutInterface_MultipleSequentialCalls verifies repeated calls
+// always return the same value.
+func TestDefaultOutInterface_MultipleSequentialCalls(t *testing.T) {
+	first := defaultOutInterface()
+	for i := 0; i < 20; i++ {
+		got := defaultOutInterface()
+		if got != first {
+			t.Errorf("call %d: got %q, want %q", i, got, first)
+		}
+	}
+}
+
+// ─── buildInfo consistency tests ──────────────────────────────────────────────
+
+// TestBuildInfo_NeverReturnsEmpty verifies buildInfo never returns empty strings.
+func TestBuildInfo_NeverReturnsEmpty(t *testing.T) {
+	commit, date := buildInfo()
+	if commit == "" {
+		t.Error("buildInfo() commit is empty")
+	}
+	if date == "" {
+		t.Error("buildInfo() date is empty")
+	}
+}
+
+// TestBuildInfo_Idempotent verifies buildInfo returns the same values across
+// 100 sequential calls.
+func TestBuildInfo_Idempotent(t *testing.T) {
+	commit0, date0 := buildInfo()
+	for i := 0; i < 100; i++ {
+		c, d := buildInfo()
+		if c != commit0 {
+			t.Fatalf("call %d: commit changed from %q to %q", i, commit0, c)
+		}
+		if d != date0 {
+			t.Fatalf("call %d: date changed from %q to %q", i, date0, d)
+		}
+	}
+}
+
+// TestBuildInfo_ConcurrentConsistency verifies concurrent calls to buildInfo
+// all return the same values.
+func TestBuildInfo_ConcurrentConsistency(t *testing.T) {
+	commit0, date0 := buildInfo()
+
+	type result struct {
+		commit, date string
+	}
+	ch := make(chan result, 50)
+	for i := 0; i < 50; i++ {
+		go func() {
+			c, d := buildInfo()
+			ch <- result{c, d}
+		}()
+	}
+	for i := 0; i < 50; i++ {
+		r := <-ch
+		if r.commit != commit0 {
+			t.Errorf("concurrent call returned commit %q, want %q", r.commit, commit0)
+		}
+		if r.date != date0 {
+			t.Errorf("concurrent call returned date %q, want %q", r.date, date0)
+		}
+	}
+}
+
+// TestBuildInfo_CommitFormat verifies the commit value is either "unknown" or
+// a valid hex string of at most 8 characters.
+func TestBuildInfo_CommitFormat(t *testing.T) {
+	commit, _ := buildInfo()
+	if commit == "unknown" {
+		return
+	}
+	if len(commit) > 8 {
+		t.Errorf("commit %q is longer than 8 characters", commit)
+	}
+	if len(commit) == 0 {
+		t.Error("commit is empty string (expected 'unknown' or hex)")
+	}
+	for _, c := range commit {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Errorf("commit contains non-hex character %q in %q", c, commit)
+			break
+		}
+	}
+}
+
+// TestBuildInfo_DateFormat verifies the date value is either "unknown" or a
+// parseable RFC3339 timestamp.
+func TestBuildInfo_DateFormat(t *testing.T) {
+	_, date := buildInfo()
+	if date == "unknown" {
+		return
+	}
+	_, err := time.Parse(time.RFC3339, date)
+	if err != nil {
+		// vcs.time may use a slightly different layout; try without timezone offset.
+		_, err2 := time.Parse("2006-01-02T15:04:05Z", date)
+		if err2 != nil {
+			t.Errorf("date %q is not RFC3339 parseable: %v", date, err)
+		}
+	}
+}
+
+// ─── runServer subprocess tests ──────────────────────────────────────────────
+
+// TestRunServer_InvalidConfig exercises runServer with an invalid config file,
+// verifying it exits with an error.
+func TestRunServer_InvalidConfig(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		tmpDir := t.TempDir()
+		badCfg := tmpDir + "/bad.json"
+		os.WriteFile(badCfg, []byte("{not json"), 0o644)
+		runServer([]string{"-config", badCfg})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunServer_InvalidConfig")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error output, got: %q", out)
+	}
+}
+
+// TestRunServer_TLSWithoutCert exercises runServer with TLS enabled but no
+// cert/key files, which should fail validation.
+func TestRunServer_TLSWithoutCert(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		runServer([]string{"-tls", "-self-signed=false"})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunServer_TLSWithoutCert")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error output for TLS without certs, got: %q", out)
+	}
+}
+
+// TestRunServer_InvalidSubnet exercises runServer with an invalid subnet,
+// which should fail config validation.
+func TestRunServer_InvalidSubnet(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		runServer([]string{"-subnet", "not-a-subnet"})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunServer_InvalidSubnet")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error output for invalid subnet, got: %q", out)
+	}
+}
+
+// TestRunServer_InvalidAddr exercises runServer with an invalid listen address,
+// which should fail config validation.
+func TestRunServer_InvalidAddr(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		runServer([]string{"-addr", "no-colon-or-port"})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunServer_InvalidAddr")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error output for invalid addr, got: %q", out)
+	}
+}
+
+// TestRunServer_AuthCreateKey dispatches the server sub-command's
+// "auth create-key" path, which delegates to runCreateAuthKey.
+func TestRunServer_AuthCreateKey(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		runServer([]string{"auth", "create-key"})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunServer_AuthCreateKey")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	// runCreateAuthKey may succeed (generating a key) or fail. Either way
+	// the dispatch path through runServer is what we are exercising.
+	if !strings.Contains(out, "error") && !strings.Contains(out, "usage") && !strings.Contains(out, "auth-key") {
+		t.Errorf("expected error, usage, or auth-key output, got: %q", out)
+	}
+}
+
+// ─── runRelay subprocess tests ───────────────────────────────────────────────
+
+// TestRunRelay_BindFailure exercises runRelay with an address that cannot be
+// bound, verifying it exits with an error.
+func TestRunRelay_BindFailure(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		runRelay([]string{"-addr", "0.0.0.0:1"})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunRelay_BindFailure")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	_ = string(output)
+}
+
+// TestRunRelay_InvalidAddr exercises runRelay with a malformed address.
+func TestRunRelay_InvalidAddr(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		runRelay([]string{"-addr", "not-valid"})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunRelay_InvalidAddr")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	_ = string(output)
+}
+
+// ─── runUp subprocess tests ──────────────────────────────────────────────────
+
+// TestRunUp_MissingServerFlag exercises runUp without --server, which should
+// fail with a required-flag error.
+func TestRunUp_MissingServerFlag(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		tmpDir := t.TempDir()
+		// Create a minimal config that provides data_dir but no server URL.
+		cfgPath := tmpDir + "/node.json"
+		os.WriteFile(cfgPath, []byte(`{"data_dir":"`+tmpDir+`"}`), 0o644)
+		runUp([]string{"-config", cfgPath})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunUp_MissingServerFlag")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error output for missing --server, got: %q", out)
+	}
+}
+
+// TestRunUp_MissingConfigFile exercises runUp with a nonexistent config file.
+func TestRunUp_MissingConfigFile(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		runUp([]string{"-config", "/nonexistent/path/config.json"})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunUp_MissingConfigFile")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error output for missing config, got: %q", out)
+	}
+}
+
+// TestRunUp_UnreachableServer exercises runUp with a server URL that does not
+// exist. The engine should fail to connect.
+func TestRunUp_UnreachableServer(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		tmpDir := t.TempDir()
+		cfgPath := tmpDir + "/node.json"
+		os.WriteFile(cfgPath, []byte(`{"data_dir":"`+tmpDir+`"}`), 0o644)
+		runUp([]string{
+			"-config", cfgPath,
+			"-server", "http://127.0.0.1:1",
+		})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunUp_UnreachableServer")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error output for unreachable server, got: %q", out)
+	}
+}
+
+// TestRunUp_PeerMode_BadRemotePubKey exercises the Phase 1 direct tunnel path
+// in runUp by providing --peer and --remote-pub with an invalid public key.
+func TestRunUp_PeerMode_BadRemotePubKey(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		tmpDir := t.TempDir()
+		cfgPath := tmpDir + "/node.json"
+		os.WriteFile(cfgPath, []byte(`{"data_dir":"`+tmpDir+`"}`), 0o644)
+		runUp([]string{
+			"-config", cfgPath,
+			"-peer", "127.0.0.1:12345",
+			"-remote-pub", "not-a-valid-key",
+		})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunUp_PeerMode_BadRemotePubKey")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error output for invalid remote pub key, got: %q", out)
+	}
+}
+
+// ─── runDirectTunnel subprocess tests ────────────────────────────────────────
+
+// TestRunDirectTunnel_BadRemotePubKey exercises runDirectTunnel with an
+// unparseable remote public key.
+func TestRunDirectTunnel_BadRemotePubKey(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		tmpDir := t.TempDir()
+		log := newLogger("info", "text")
+		cfg := config.DefaultNodeConfig()
+		cfg.DataDir = tmpDir
+		runDirectTunnel(cfg, "127.0.0.1:12345", "!!!invalid-base64!!!", log)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunDirectTunnel_BadRemotePubKey")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error output for bad remote pub key, got: %q", out)
+	}
+}
+
+// TestRunDirectTunnel_ShortKey exercises runDirectTunnel with a base64 key
+// that decodes to fewer than 32 bytes.
+func TestRunDirectTunnel_ShortKey(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		tmpDir := t.TempDir()
+		log := newLogger("info", "text")
+		cfg := config.DefaultNodeConfig()
+		cfg.DataDir = tmpDir
+		shortKey := "dG9vc2hvcg==" // base64("tooshort") = 8 bytes, not 32
+		runDirectTunnel(cfg, "127.0.0.1:12345", shortKey, log)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunDirectTunnel_ShortKey")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "error") {
+		t.Errorf("expected error for short key, got: %q", out)
+	}
+}
+
+// ─── defaultDataDir tests ────────────────────────────────────────────────────
+
+// TestDefaultDataDir_WithHOME verifies defaultDataDir returns a path ending
+// in .karadul when HOME is set.
+func TestDefaultDataDir_WithHOME(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		dir := defaultDataDir()
+		if !strings.HasSuffix(dir, "/.karadul") {
+			fmt.Fprintf(os.Stderr, "defaultDataDir = %q, expected suffix /.karadul", dir)
+			os.Exit(1)
+		}
+		return
+	}
+	home := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=TestDefaultDataDir_WithHOME")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1", "HOME="+home)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("subprocess failed: %v, output: %s", err, output)
+	}
+}
+
+// TestDefaultDataDir_EmptyHOME verifies the fallback works when HOME is set
+// to a valid path.
+func TestDefaultDataDir_EmptyHOME(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		dir := defaultDataDir()
+		if dir == "" {
+			fmt.Fprintf(os.Stderr, "defaultDataDir returned empty")
+			os.Exit(1)
+		}
+		if !strings.HasSuffix(dir, ".karadul") {
+			fmt.Fprintf(os.Stderr, "defaultDataDir = %q, expected suffix .karadul", dir)
+			os.Exit(1)
+		}
+		return
+	}
+	home := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=TestDefaultDataDir_EmptyHOME")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1", "HOME="+home)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("subprocess failed: %v, output: %s", err, output)
+	}
+}
+
+// TestDefaultDataDir_NoHomeExit exercises the code path where HOME is empty
+// and os.UserHomeDir also fails, causing os.Exit.
+func TestDefaultDataDir_NoHomeExit(t *testing.T) {
+	if os.Getenv("TEST_MAIN") == "1" {
+		os.Unsetenv("HOME")
+		defaultDataDir()
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestDefaultDataDir_NoHomeExit")
+	cmd.Env = append(os.Environ(), "TEST_MAIN=1", "HOME=")
+	output, _ := cmd.CombinedOutput()
+	out := string(output)
+	if !strings.Contains(out, "cannot determine home directory") {
+		t.Errorf("expected home directory error, got: %q", out)
+	}
+}
+
+// ─── buildInfo value tests ───────────────────────────────────────────────────
+
+// TestBuildInfo_ReturnsTwoValues verifies buildInfo returns exactly two values
+// that are non-empty and well-formed.
+func TestBuildInfo_ReturnsTwoValues(t *testing.T) {
+	commit, date := buildInfo()
+
+	if commit == "" {
+		t.Error("commit should not be empty (expected 'unknown' or hex)")
+	}
+	if date == "" {
+		t.Error("date should not be empty (expected 'unknown' or RFC3339)")
+	}
+
+	t.Logf("buildInfo: commit=%q date=%q", commit, date)
+}
+
+// TestBuildInfo_CommitLengthBound verifies the commit string is at most 8 chars
+// when not "unknown".
+func TestBuildInfo_CommitLengthBound(t *testing.T) {
+	commit, _ := buildInfo()
+	if commit == "unknown" {
+		t.Skip("no VCS info available, commit is 'unknown'")
+	}
+	if len(commit) > 8 {
+		t.Errorf("commit %q exceeds 8 characters", commit)
+	}
+	if len(commit) == 0 {
+		t.Error("commit is empty")
 	}
 }

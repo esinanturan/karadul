@@ -3858,28 +3858,28 @@ func TestRegister_HTTPError(t *testing.T) {
 // request creation errors.
 func TestReportEndpoint_RequestError(t *testing.T) {
 	e := testEngine(t)
-	e.serverURL = "http://127.0.0.1:1" // unreachable port
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	// Use a cancelled context to force a request error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
 	err := e.reportEndpoint(ctx, "1.2.3.4:1234")
 	if err == nil {
-		t.Error("expected error for unreachable server")
+		t.Error("expected error for cancelled context")
 	}
 }
 
 // TestSendPing_RequestError verifies that sendPing handles HTTP request errors.
 func TestSendPing_RequestError(t *testing.T) {
 	e := testEngine(t)
-	e.serverURL = "http://127.0.0.1:1"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	// Use a cancelled context to force a request error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
 	err := e.sendPing(ctx)
 	if err == nil {
-		t.Error("expected error for unreachable server")
+		t.Error("expected error for cancelled context")
 	}
 }
 

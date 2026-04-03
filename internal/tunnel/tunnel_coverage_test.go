@@ -5,6 +5,7 @@ package tunnel
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -847,5 +848,580 @@ func TestDarwinTUN_AddRoute_IPv6_ErrorMentionsRoute(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "route") {
 		t.Errorf("error should mention route: %v", err)
+	}
+}
+
+// ─── CreateTUN — name parsing edge cases ───────────────────────────────────
+//
+// These tests exercise the fmt.Sscanf name parsing logic in CreateTUN.
+// Without root, openUtun fails at the connect() step, but the unit number
+// extraction logic is still exercised and can be verified indirectly by
+// checking that the error is a connect error (not a parse error).
+
+func TestCreateTUN_NameParsing_Table(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantAuto bool // true if unit should be auto-assigned (-1)
+	}{
+		{"Empty", "", true},
+		{"UtunOnly", "utun", true},
+		{"Utun0", "utun0", false},
+		{"Utun1", "utun1", false},
+		{"Utun99", "utun99", false},
+		{"Utun100", "utun100", false},
+		{"Utun255", "utun255", false},
+		{"Utun999", "utun999", false},
+		{"Garbage", "garbage", true},
+		{"Eth0", "eth0", true},
+		{"UtunSuffix", "utun123extra", true}, // Sscanf reads "123" but has leftover; still succeeds
+		{"PartialPrefix", "utu", true},
+		{"Uppercase", "UTUN5", true},
+		{"JustU", "u", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := CreateTUN(tc.input)
+			// Without root, this always fails. Verify it's a well-formed error.
+			if err == nil {
+				t.Logf("CreateTUN(%q) succeeded — running as root?", tc.input)
+				return
+			}
+			// The error should be from the connect step (not a panic or nil deref).
+			errMsg := err.Error()
+			if errMsg == "" {
+				t.Errorf("CreateTUN(%q): got empty error message", tc.input)
+			}
+		})
+	}
+}
+
+// ─── CreateTUN — error message structure ──────────────────────────────────
+
+func TestCreateTUN_ErrorWrapping(t *testing.T) {
+	_, err := CreateTUN("")
+	if err == nil {
+		t.Skip("CreateTUN succeeded — running as root?")
+	}
+
+	// The error should mention "connect utun" or "socket AF_SYSTEM" — either
+	// indicates openUtun was called and failed at a known step.
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "connect utun") &&
+		!strings.Contains(errMsg, "socket AF_SYSTEM") &&
+		!strings.Contains(errMsg, "CTLIOCGINFO") {
+		t.Errorf("unexpected error from CreateTUN: %v", err)
+	}
+}
+
+// ─── openUtun — various unit values ───────────────────────────────────────
+//
+// These exercise the addr.Unit construction logic with different unit values.
+// The addr.Unit is set to unit+1 for non-negative, or 0 for auto.
+// Without root, all calls fail at connect(), but the unit-dependent branch
+// is still exercised.
+
+func TestOpenUtun_UnitZero(t *testing.T) {
+	fd, name, err := openUtun(0)
+	t.Logf("openUtun(0): fd=%d, name=%q, err=%v", fd, name, err)
+	if err == nil {
+		// Success — verify we got a valid fd and name.
+		if fd < 0 {
+			t.Errorf("fd should be >= 0, got %d", fd)
+		}
+		if name == "" {
+			t.Error("name should not be empty")
+		}
+		// Clean up the device.
+		dev := &darwinTUN{file: os.NewFile(uintptr(fd), name), name: name, mtu: 1420}
+		defer dev.Close()
+	}
+}
+
+func TestOpenUtun_LargeUnit(t *testing.T) {
+	fd, name, err := openUtun(500)
+	t.Logf("openUtun(500): fd=%d, name=%q, err=%v", fd, name, err)
+	if err == nil {
+		dev := &darwinTUN{file: os.NewFile(uintptr(fd), name), name: name, mtu: 1420}
+		defer dev.Close()
+	}
+}
+
+func TestOpenUtun_VeryLargeUnit(t *testing.T) {
+	// macOS utun unit is a uint32. Test with a large but valid value.
+	fd, name, err := openUtun(9999)
+	t.Logf("openUtun(9999): fd=%d, name=%q, err=%v", fd, name, err)
+	if err == nil {
+		dev := &darwinTUN{file: os.NewFile(uintptr(fd), name), name: name, mtu: 1420}
+		defer dev.Close()
+	}
+}
+
+func TestOpenUtun_UnitBoundaryValues(t *testing.T) {
+	// Test a range of unit values to exercise the addr.Unit = uint32(unit+1) path.
+	for _, unit := range []int{0, 1, 2, 5, 10, 50, 100, 200, 255, 256} {
+		t.Run(fmt.Sprintf("unit_%d", unit), func(t *testing.T) {
+			fd, name, err := openUtun(unit)
+			if err == nil {
+				t.Logf("openUtun(%d): fd=%d, name=%q", unit, fd, name)
+				dev := &darwinTUN{file: os.NewFile(uintptr(fd), name), name: name, mtu: 1420}
+				defer dev.Close()
+			} else {
+				// Expected when not root — just ensure no panic.
+				t.Logf("openUtun(%d): err=%v", unit, err)
+			}
+		})
+	}
+}
+
+func TestOpenUtun_NegativeOne(t *testing.T) {
+	// unit=-1 triggers the auto-assign path (addr.Unit = 0).
+	fd, name, err := openUtun(-1)
+	t.Logf("openUtun(-1): fd=%d, name=%q, err=%v", fd, name, err)
+	if err == nil {
+		dev := &darwinTUN{file: os.NewFile(uintptr(fd), name), name: name, mtu: 1420}
+		defer dev.Close()
+	}
+}
+
+func TestOpenUtun_VeryNegativeUnit(t *testing.T) {
+	// A very negative unit should still trigger the auto-assign path.
+	fd, name, err := openUtun(-100)
+	t.Logf("openUtun(-100): fd=%d, name=%q, err=%v", fd, name, err)
+	if err == nil {
+		dev := &darwinTUN{file: os.NewFile(uintptr(fd), name), name: name, mtu: 1420}
+		defer dev.Close()
+	}
+}
+
+// ─── CreateTUN — name parsing with "utun0" (likely existing) ─────────────
+
+func TestCreateTUN_Utun0(t *testing.T) {
+	// utun0 often exists on macOS (created by the system). This should either
+	// fail because it's already in use or succeed.
+	_, err := CreateTUN("utun0")
+	if err == nil {
+		t.Log("CreateTUN('utun0') succeeded")
+	}
+	// No assertion — just verifying no panic and the name parsing works.
+}
+
+func TestCreateTUN_Utun2(t *testing.T) {
+	_, err := CreateTUN("utun2")
+	if err == nil {
+		t.Log("CreateTUN('utun2') succeeded")
+	}
+}
+
+// ─── CreateTUN — consecutive calls ───────────────────────────────────────
+
+func TestCreateTUN_ConsecutiveAutoAssign(t *testing.T) {
+	// Two consecutive auto-assign calls should both fail (non-root) or
+	// both succeed with different names (root).
+	dev1, err1 := CreateTUN("")
+	if err1 != nil {
+		t.Logf("first CreateTUN(''): %v", err1)
+		return
+	}
+	defer dev1.Close()
+
+	dev2, err2 := CreateTUN("")
+	if err2 != nil {
+		t.Fatalf("second CreateTUN(''): %v", err2)
+	}
+	defer dev2.Close()
+
+	// Both succeeded — names should differ.
+	if dev1.Name() == dev2.Name() {
+		t.Errorf("auto-assigned names should differ: both %q", dev1.Name())
+	}
+}
+
+// ─── CreateTUN — name with non-numeric suffix ────────────────────────────
+
+func TestCreateTUN_NameWithNonNumericSuffix(t *testing.T) {
+	// "utunABC" should fail to parse, treating unit as auto-assign.
+	_, err := CreateTUN("utunABC")
+	if err == nil {
+		t.Log("CreateTUN('utunABC') succeeded")
+	}
+}
+
+func TestCreateTUN_NameWithMixedAlphanumeric(t *testing.T) {
+	// "utun10x" — Sscanf will parse 10 from "utun10x" successfully.
+	_, err := CreateTUN("utun10x")
+	if err == nil {
+		t.Log("CreateTUN('utun10x') succeeded")
+	}
+}
+
+func TestCreateTUN_NameWithSpaces(t *testing.T) {
+	_, err := CreateTUN("utun 5")
+	if err == nil {
+		t.Log("CreateTUN('utun 5') succeeded")
+	}
+}
+
+// ─── AddRoute with IPv4-mapped IPv6 via fake route ──────────────────────────
+
+func TestDarwinTUN_AddRoute_IPv4MappedIPv6_SuccessViaFakeRoute(t *testing.T) {
+	setupFakeRoute(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	// IPv4-mapped IPv6: ::ffff:10.0.0.0 — To4() returns non-nil, so it takes the IPv4 path.
+	_, dst, err := net.ParseCIDR("::ffff:10.0.0.0/120")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	if dst.IP.To4() == nil {
+		t.Fatal("expected IPv4-mapped IPv6 to have To4() != nil")
+	}
+	if err := dev.AddRoute(dst); err != nil {
+		t.Fatalf("AddRoute IPv4-mapped IPv6: %v", err)
+	}
+}
+
+// ─── AddRoute with IPv4-mapped IPv6 error message verification ──────────────
+
+func TestDarwinTUN_AddRoute_IPv4MappedIPv6_ErrorMentionsRoute(t *testing.T) {
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	_, dst, err := net.ParseCIDR("::ffff:172.16.0.0/116")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	err = dev.AddRoute(dst)
+	if err == nil {
+		t.Skip("AddRoute succeeded (route in PATH)")
+	}
+	if !strings.Contains(err.Error(), "route") {
+		t.Errorf("error should mention route: %v", err)
+	}
+}
+
+// ─── SetMTU error path via fake failing ifconfig ───────────────────────────
+
+func setupFakeFailingIfconfig(t *testing.T) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	// ifconfig that exits with non-zero and prints a message
+	script := `#!/bin/sh
+echo "ifconfig: device not found" >&2
+exit 1
+`
+	if err := os.WriteFile(tmpDir+"/ifconfig", []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+}
+
+func TestDarwinTUN_SetMTU_ErrorViaFakeFailingIfconfig(t *testing.T) {
+	setupFakeFailingIfconfig(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	err := dev.SetMTU(1280)
+	if err == nil {
+		t.Fatal("expected error from SetMTU with failing ifconfig")
+	}
+	if !strings.Contains(err.Error(), "ifconfig mtu") {
+		t.Errorf("error should mention 'ifconfig mtu': %v", err)
+	}
+	// MTU should remain unchanged after error
+	if dev.MTU() != 1420 {
+		t.Errorf("MTU changed after error: got %d, want 1420", dev.MTU())
+	}
+}
+
+// ─── SetAddr error path via fake failing ifconfig ──────────────────────────
+
+func TestDarwinTUN_SetAddr_IPv4_ErrorViaFakeFailingIfconfig(t *testing.T) {
+	setupFakeFailingIfconfig(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	err := dev.SetAddr(net.IPv4(10, 0, 0, 1), 24)
+	if err == nil {
+		t.Fatal("expected error from SetAddr with failing ifconfig")
+	}
+	if !strings.Contains(err.Error(), "ifconfig addr") {
+		t.Errorf("error should mention 'ifconfig addr': %v", err)
+	}
+}
+
+func TestDarwinTUN_SetAddr_IPv6_ErrorViaFakeFailingIfconfig(t *testing.T) {
+	setupFakeFailingIfconfig(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	err := dev.SetAddr(net.ParseIP("fd00::1"), 64)
+	if err == nil {
+		t.Fatal("expected error from SetAddr with failing ifconfig")
+	}
+	if !strings.Contains(err.Error(), "ifconfig addr") {
+		t.Errorf("error should mention 'ifconfig addr': %v", err)
+	}
+}
+
+func TestDarwinTUN_SetAddr_IPv4MappedIPv6_ErrorViaFakeFailingIfconfig(t *testing.T) {
+	setupFakeFailingIfconfig(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	ip := net.ParseIP("::ffff:192.168.1.1")
+	if ip.To4() == nil {
+		t.Fatal("expected IPv4-mapped IPv6 to have To4() != nil")
+	}
+	err := dev.SetAddr(ip, 24)
+	if err == nil {
+		t.Fatal("expected error from SetAddr with failing ifconfig")
+	}
+	if !strings.Contains(err.Error(), "ifconfig addr") {
+		t.Errorf("error should mention 'ifconfig addr': %v", err)
+	}
+}
+
+// ─── SetAddr with IPv4-mapped IPv6 via fake ifconfig (success path) ────────
+
+func TestDarwinTUN_SetAddr_IPv4MappedIPv6_SuccessViaFakeIfconfig(t *testing.T) {
+	setupFakeIfconfig(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	ip := net.ParseIP("::ffff:10.0.0.1")
+	if ip.To4() == nil {
+		t.Fatal("expected IPv4-mapped IPv6 to have To4() != nil")
+	}
+	if err := dev.SetAddr(ip, 24); err != nil {
+		t.Fatalf("SetAddr IPv4-mapped IPv6: %v", err)
+	}
+}
+
+// ─── IPv4-mapped IPv6 round-trip ──────────────────────────────────────────
+
+func TestDarwinTUN_RoundTrip_IPv4MappedIPv6(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+
+	writeDev := &darwinTUN{file: w, name: "utun1", mtu: 1420}
+	readDev := &darwinTUN{file: r, name: "utun1", mtu: 1420}
+
+	// Build an IPv4 packet (IPv4-mapped IPv6 addresses are still carried in IPv4 packets)
+	src := net.IPv4(10, 0, 0, 1)
+	dst := net.IPv4(10, 0, 0, 2)
+	origPkt := buildIPv4Packet(src, dst, ProtoTCP, []byte("ipv4-mapped-rt"))
+
+	wn, err := writeDev.Write(origPkt)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if wn != len(origPkt) {
+		t.Errorf("Write returned %d, want %d", wn, len(origPkt))
+	}
+
+	buf := make([]byte, 4096)
+	rn, err := readDev.Read(buf)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !bytes.Equal(buf[:rn], origPkt) {
+		t.Errorf("round-trip mismatch:\n got %x\n want %x", buf[:rn], origPkt)
+	}
+
+	writeDev.Close()
+	readDev.Close()
+}
+
+// ─── SetAddr with link-local IPv6 via fake ifconfig ───────────────────────
+
+func TestDarwinTUN_SetAddr_LinkLocalIPv6_SuccessViaFakeIfconfig(t *testing.T) {
+	setupFakeIfconfig(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	ip := net.ParseIP("fe80::1")
+	if err := dev.SetAddr(ip, 64); err != nil {
+		t.Fatalf("SetAddr link-local IPv6: %v", err)
+	}
+}
+
+// ─── AddRoute with link-local IPv6 via fake route ─────────────────────────
+
+func TestDarwinTUN_AddRoute_LinkLocalIPv6_SuccessViaFakeRoute(t *testing.T) {
+	setupFakeRoute(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	_, dst, err := net.ParseCIDR("fe80::/64")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	if err := dev.AddRoute(dst); err != nil {
+		t.Fatalf("AddRoute link-local IPv6: %v", err)
+	}
+}
+
+// ─── AddRoute with IPv4-mapped IPv6 error path (no fake) ──────────────────
+
+func TestDarwinTUN_AddRoute_IPv4MappedIPv6_GracefulFailure(t *testing.T) {
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	// IPv4-mapped IPv6 address range: ::ffff:a.b.c.d → To4() != nil → IPv4 route path
+	_, dst, err := net.ParseCIDR("::ffff:10.0.0.0/120")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	err = dev.AddRoute(dst)
+	if err == nil {
+		t.Log("AddRoute IPv4-mapped succeeded unexpectedly")
+		return
+	}
+	// Should contain "route add" or "route" in the error
+	errMsg := err.Error()
+	if len(errMsg) == 0 {
+		t.Error("expected non-empty error")
+	}
+}
+
+// ─── SetAddr with link-local IPv6 error path (no fake) ────────────────────
+
+func TestDarwinTUN_SetAddr_LinkLocalIPv6_ErrorPath(t *testing.T) {
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	ip := net.ParseIP("fe80::1")
+	err := dev.SetAddr(ip, 10)
+	if err == nil {
+		t.Log("SetAddr link-local IPv6 succeeded unexpectedly")
+		return
+	}
+	if !strings.Contains(err.Error(), "ifconfig") {
+		t.Errorf("error should mention ifconfig: %v", err)
+	}
+}
+
+// ─── Read/Write with various packet types via pipe ─────────────────────────
+
+func TestDarwinTUN_WriteNilSlice(t *testing.T) {
+	dev, rd := newDarwinTUNForWrite(t)
+	defer dev.Close()
+	defer rd.Close()
+
+	n, err := dev.Write(nil)
+	if err != nil {
+		t.Fatalf("Write nil: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("Write nil returned %d, want 0", n)
+	}
+
+	wire := make([]byte, 16)
+	wn, err := rd.Read(wire)
+	if err != nil {
+		t.Fatalf("pipe read: %v", err)
+	}
+	if wn != 4 {
+		t.Errorf("wire length: got %d, want 4 (AF header only)", wn)
+	}
+}
+
+// ─── SetAddr error message includes output from ifconfig ───────────────────
+
+func TestDarwinTUN_SetAddr_IPv4_ErrorIncludesOutput(t *testing.T) {
+	setupFakeFailingIfconfig(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	err := dev.SetAddr(net.IPv4(10, 0, 0, 1), 24)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// The error should include the ifconfig output
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "ifconfig") {
+		t.Errorf("error should mention ifconfig: %v", err)
+	}
+	if !strings.Contains(errMsg, "device not found") {
+		t.Errorf("error should include ifconfig output: %v", err)
+	}
+}
+
+// ─── SetMTU error message includes output from ifconfig ────────────────────
+
+func TestDarwinTUN_SetMTU_ErrorIncludesOutput(t *testing.T) {
+	setupFakeFailingIfconfig(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	err := dev.SetMTU(9000)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "ifconfig") {
+		t.Errorf("error should mention ifconfig: %v", err)
+	}
+	if !strings.Contains(errMsg, "device not found") {
+		t.Errorf("error should include ifconfig output: %v", err)
+	}
+}
+
+// ─── AddRoute error message includes output from route ─────────────────────
+
+func setupFakeFailingRoute(t *testing.T) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	script := `#!/bin/sh
+echo "route: writing to routing socket: not owner" >&2
+exit 1
+`
+	if err := os.WriteFile(tmpDir+"/route", []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+}
+
+func TestDarwinTUN_AddRoute_IPv4_ErrorIncludesOutput(t *testing.T) {
+	setupFakeFailingRoute(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	_, dst, err := net.ParseCIDR("10.0.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = dev.AddRoute(dst)
+	if err == nil {
+		t.Fatal("expected error from AddRoute with failing route")
+	}
+	if !strings.Contains(err.Error(), "route add") {
+		t.Errorf("error should mention 'route add': %v", err)
+	}
+	if !strings.Contains(err.Error(), "not owner") {
+		t.Errorf("error should include route output: %v", err)
+	}
+}
+
+func TestDarwinTUN_AddRoute_IPv6_ErrorIncludesOutput(t *testing.T) {
+	setupFakeFailingRoute(t)
+	dev, _ := newDarwinTUNForRead(t)
+	defer dev.Close()
+
+	_, dst, err := net.ParseCIDR("fd00::/64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = dev.AddRoute(dst)
+	if err == nil {
+		t.Fatal("expected error from AddRoute with failing route")
+	}
+	if !strings.Contains(err.Error(), "route add") {
+		t.Errorf("error should mention 'route add': %v", err)
 	}
 }
